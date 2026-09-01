@@ -2,6 +2,10 @@
 
 > 로컬 중심의 AI 에이전트 모니터링 및 문서 관리 시스템
 
+![DIOS local-first workspace overview](docs/dios-overview.svg)
+
+DIOS는 데스크톱에서 AI 서비스 사용량, 프로젝트 문서, Skills, 실험과 Human Gate를 한곳에서 관리하는 로컬 우선 작업공간입니다.
+
 ![DIOS](https://img.shields.io/badge/version-0.1.0-blue)
 ![Electron](https://img.shields.io/badge/Electron-33.2.1-47848F?logo=electron)
 ![React](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react)
