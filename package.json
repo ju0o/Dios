@@ -1,7 +1,7 @@
 {
   "name": "dios",
   "version": "0.1.0",
-  "description": "Document Intelligence & Organization System",
+  "description": "Windows app that keeps AI agent skills in one place",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
