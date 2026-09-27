@@ -18,8 +18,8 @@ import { AgentsView } from './pages/AgentsView'
 import { SystemView } from './pages/SystemView'
 import { Settings } from './pages/Settings'
 import { Dashboard } from './pages/Dashboard'
-import { GraphView } from './pages/GraphView'
 import { TimelineView } from './pages/TimelineView'
+import { SkillBoardView } from './pages/SkillBoardView'
 import { AIResourceView } from './pages/AIResourceView'
 import { DecisionView } from './pages/DecisionView'
 import { ExperimentView } from './pages/ExperimentView'
@@ -28,24 +28,29 @@ import { AgentMonitorView } from './pages/AgentMonitorView'
 import { CommandPalette } from './components/CommandPalette'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 
-type ViewType = 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'graph' | 'timeline' | 'aiResources' | 'agentMonitor' | 'decisions' | 'experiments' | 'humanGates'
+type ViewType = 'skillBoard' | 'agentMonitor' | 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'timeline' | 'aiResources' | 'decisions' | 'experiments' | 'humanGates'
 
 const primaryNav: Array<{ id: ViewType; label: string; icon: string }> = [
+  { id: 'skillBoard', label: '스킬 보드', icon: '✧' },
+  { id: 'agentMonitor', label: '사용량', icon: '◔' },
+]
+
+const moreNav: Array<{ id: ViewType; label: string; icon: string }> = [
   { id: 'home', label: '프로젝트 홈', icon: '⌂' },
-  { id: 'project-data', label: '프로젝트 자료', icon: '⌗' },
+  { id: 'skills', label: '스킬 글', icon: '✧' },
   { id: 'changes', label: '변경사항', icon: '⌁' },
-  { id: 'maintenance', label: '유지보수', icon: '◌' },
-  { id: 'backups', label: '백업·복구', icon: '◒' },
-  { id: 'environment', label: '환경 상태', icon: '⌘' },
-  { id: 'requests', label: 'Agent 요청서', icon: '✦' },
+  { id: 'files', label: '자료 스캔', icon: '⌗' },
+  { id: 'settings', label: '설정', icon: '⚙' },
 ]
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ViewType>('home')
+  const [currentView, setCurrentView] = useState<ViewType>('skillBoard')
+  const [moreOpen, setMoreOpen] = useState(false)
   const navigate = (view: string) => setCurrentView(view as ViewType)
 
   function renderView() {
     switch (currentView) {
+      case 'skillBoard': return <SkillBoardView />
       case 'home': return <ProjectHomeView onNavigate={navigate} />
       case 'project-data': return <ProjectConnectionsView onNavigate={navigate} />
       case 'changes': return <ChangesView />
@@ -62,7 +67,6 @@ export default function App() {
       case 'system': return <SystemView />
       case 'settings': return <Settings />
       case 'dashboard': return <Dashboard />
-      case 'graph': return <GraphView />
       case 'timeline': return <TimelineView />
       case 'aiResources': return <AIResourceView />
       case 'agentMonitor': return <AgentMonitorView />
@@ -79,23 +83,19 @@ export default function App() {
         <ScanProvider>
         <div className="app-shell">
           <aside className="app-sidebar glass-strong">
-            <button className="brand-lockup" onClick={() => navigate('home')}><span className="brand-mark">D</span><span><b>DIOS</b><small>local operations</small></span></button>
-            <div className="sidebar-label">WORKSPACE</div>
+            <button className="brand-lockup" onClick={() => navigate('skillBoard')}><span className="brand-mark">D</span><span><b>DIOS</b><small>스킬 보드</small></span></button>
+            <div className="sidebar-label">지금</div>
             <nav className="sidebar-nav">{primaryNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}<i>›</i></button>)}</nav>
             <div className="sidebar-spacer" />
-            <div className="sidebar-label">LIBRARY</div>
-            <nav className="sidebar-nav compact-nav">{[
-              ['files', '자료 스캔', '⌗'], ['tree', '파일 탐색', '⊞'], ['skills', 'Skills', '✧'], ['memory', 'Memory', '◫'],
-            ].map(([id, label, icon]) => <button key={id} onClick={() => navigate(id)} className={`sidebar-link ${currentView === id ? 'is-active' : ''}`}><span>{icon}</span>{label}<i>›</i></button>)}</nav>
-            <div className="sidebar-label">MONITOR</div>
+            <div className="sidebar-label">더 보기</div>
             <nav className="sidebar-nav compact-nav">
-              <button onClick={() => navigate('agentMonitor')} className={`sidebar-link ${currentView === 'agentMonitor' ? 'is-active' : ''}`}><span>🤖</span>Agent Monitor<i>›</i></button>
-              <button onClick={() => navigate('aiResources')} className={`sidebar-link ${currentView === 'aiResources' ? 'is-active' : ''}`}><span>⬢</span>AI 리소스<i>›</i></button>
+              <button type="button" onClick={() => setMoreOpen((open) => !open)} className="sidebar-link"><span>▾</span>{moreOpen ? '접기' : '이전 화면'}<i>›</i></button>
+              {moreOpen && moreNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}<i>›</i></button>)}
             </nav>
-            <div className="sidebar-footer"><button onClick={() => navigate('operations')} className="sidebar-link"><span>◎</span>연동 관리<i>›</i></button><button onClick={() => navigate('settings')} className="sidebar-link"><span>⚙</span>설정<i>›</i></button><div className="local-badge"><span /> LOCAL ONLY</div></div>
+            <div className="sidebar-footer"><button onClick={() => navigate('operations')} className="sidebar-link"><span>◎</span>연동 관리<i>›</i></button><button onClick={() => navigate('settings')} className="sidebar-link"><span>⚙</span>설정<i>›</i></button><div className="local-badge"><span /> 이 컴퓨터만</div></div>
           </aside>
           <main className="app-main">
-            <div className="topbar"><div className="breadcrumb"><span>DIOS</span><b>/</b><strong>{primaryNav.find((item) => item.id === currentView)?.label || '라이브러리'}</strong></div><div className="topbar-actions"><button onClick={() => navigate('requests')} className="topbar-button">✦ 요청서 만들기</button><span className="shortcut-hint">Ctrl K</span><span className="online-dot" /> 로컬 실행 중</div></div>
+            <div className="topbar"><div className="breadcrumb"><span>DIOS</span><b>/</b><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || '스킬 보드'}</strong></div><div className="topbar-actions"><button onClick={() => navigate('skillBoard')} className="topbar-button">스킬 보드</button><span className="online-dot" /> 이 컴퓨터에서만</div></div>
             <div key={currentView} className="app-content">{renderView()}</div>
           </main>
           <CommandPalette onNavigate={navigate} />

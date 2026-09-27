@@ -91,6 +91,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCachedAgentUsage: () => ipcRenderer.invoke('agentMonitor:getCachedUsage'),
   countLocalFiles: () => ipcRenderer.invoke('agentMonitor:countFiles'),
 
+  skillBoardPlaces: () => ipcRenderer.invoke('skillBoard:places'),
+  skillBoardGet: (placeId: string) => ipcRenderer.invoke('skillBoard:get', placeId),
+  skillBoardLink: (placeId: string, agentId: string, skillName: string) => ipcRenderer.invoke('skillBoard:link', placeId, agentId, skillName),
+  skillBoardUnlink: (placeId: string, agentId: string, skillName: string) => ipcRenderer.invoke('skillBoard:unlink', placeId, agentId, skillName),
+  skillBoardAck: (placeId: string, skillName: string) => ipcRenderer.invoke('skillBoard:ack', placeId, skillName),
+  skillBoardCreate: (placeId: string, name: string, summary: string, steps: string[], agentIds: string[]) => ipcRenderer.invoke('skillBoard:create', placeId, name, summary, steps, agentIds),
+  skillBoardRead: (placeId: string, name: string) => ipcRenderer.invoke('skillBoard:read', placeId, name),
+  skillBoardSave: (placeId: string, name: string, text: string) => ipcRenderer.invoke('skillBoard:save', placeId, name, text),
+  skillBoardSend: (fromId: string, toId: string, name: string, overwrite: boolean, agentIds?: string[]) => ipcRenderer.invoke('skillBoard:send', fromId, toId, name, overwrite, agentIds),
+  skillBoardHistory: (placeId: string, name: string) => ipcRenderer.invoke('skillBoard:history', placeId, name),
+  skillBoardRestore: (placeId: string, name: string, versionId: string) => ipcRenderer.invoke('skillBoard:restore', placeId, name, versionId),
+  skillBoardTrash: (placeId: string, name: string) => ipcRenderer.invoke('skillBoard:trash', placeId, name),
+  skillBoardTrashList: (placeId: string) => ipcRenderer.invoke('skillBoard:trashList', placeId),
+  skillBoardUntrash: (placeId: string, id: string) => ipcRenderer.invoke('skillBoard:untrash', placeId, id),
+  skillBoardCompare: (placeId: string) => ipcRenderer.invoke('skillBoard:compare', placeId),
+  skillBoardTranslate: (placeId: string, name: string, text: string) => ipcRenderer.invoke('skillBoard:translate', placeId, name, text),
+  skillBoardGuide: (placeId: string, agentId: string, on: boolean) => ipcRenderer.invoke('skillBoard:guide', placeId, agentId, on),
+  skillBoardHolders: (placeId: string, name: string) => ipcRenderer.invoke('skillBoard:holders', placeId, name),
+  skillBoardReflect: (placeId: string, name: string, toIds: string[]) => ipcRenderer.invoke('skillBoard:reflect', placeId, name, toIds),
+
   // ═══════════════════════════════════════════
   // Operations center
   // ═══════════════════════════════════════════

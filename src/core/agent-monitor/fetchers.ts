@@ -301,11 +301,11 @@ export async function fetchCodexSubscriptionUsage(config: AgentServiceConfig): P
     // Codex 세션 로그 경로 (예시)
     const codexLogPath = path.join(os.homedir(), '.codex', 'sessions')
     let totalUsed = 0
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
 
     if (fs.existsSync(codexLogPath)) {
       const files = fs.readdirSync(codexLogPath)
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
 
       for (const file of files) {
         const filePath = path.join(codexLogPath, file)
@@ -378,11 +378,11 @@ export async function fetchClaudeCodeSubscriptionUsage(config: AgentServiceConfi
     // Claude Code 세션 로그 경로 (예시)
     const claudeLogPath = path.join(os.homedir(), '.claude', 'sessions')
     let totalUsed = 0
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
 
     if (fs.existsSync(claudeLogPath)) {
       const files = fs.readdirSync(claudeLogPath)
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
 
       for (const file of files) {
         const filePath = path.join(claudeLogPath, file)

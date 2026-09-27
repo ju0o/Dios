@@ -6,10 +6,16 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
-  - docs/DIOS-사용자-튜토리얼.md
   - package.json
+  - node_modules/**/*
+asarUnpack:
+  - node_modules/better-sqlite3/**
 win:
   target: nsis
+  artifactName: DIOS-설치.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  installerLanguages:
+    - ko_KR
+  language: 1042

@@ -17,7 +17,6 @@
     "@tailwindcss/typography": "^0.5.20",
     "better-sqlite3": "^11.7.0",
     "commander": "^12.1.0",
-    "cytoscape": "^3.30.4",
     "fast-glob": "^3.3.2",
     "gray-matter": "^4.0.3",
     "marked": "^18.0.7",
@@ -29,7 +28,6 @@
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/cytoscape": "^3.21.8",
     "@types/jest": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.2",

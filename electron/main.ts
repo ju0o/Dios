@@ -483,6 +483,106 @@ ipcMain.handle('agentMonitor:countFiles', async () => {
   return countLocalFiles()
 })
 
+ipcMain.handle('skillBoard:places', async () => {
+  const { places } = await import('../src/core/skill-board/board-service')
+  return places()
+})
+
+ipcMain.handle('skillBoard:get', async (_event, placeId: string) => {
+  const { boardFor } = await import('../src/core/skill-board/board-service')
+  return boardFor(String(placeId || 'local'))
+})
+
+ipcMain.handle('skillBoard:link', async (_event, placeId: string, agentId: string, skillName: string) => {
+  const { linkAt } = await import('../src/core/skill-board/board-service')
+  return linkAt(String(placeId || 'local'), String(agentId), String(skillName))
+})
+
+ipcMain.handle('skillBoard:unlink', async (_event, placeId: string, agentId: string, skillName: string) => {
+  const { unlinkAt } = await import('../src/core/skill-board/board-service')
+  return unlinkAt(String(placeId || 'local'), String(agentId), String(skillName))
+})
+
+ipcMain.handle('skillBoard:ack', async (_event, placeId: string, skillName: string) => {
+  const { ackAt } = await import('../src/core/skill-board/board-service')
+  return ackAt(String(placeId || 'local'), String(skillName))
+})
+
+ipcMain.handle('skillBoard:create', async (_event, placeId: string, name: string, summary: string, steps: string[], agentIds: string[]) => {
+  const { createAt } = await import('../src/core/skill-board/board-service')
+  return createAt(String(placeId || 'local'), String(name), String(summary), Array.isArray(steps) ? steps.map(String) : [], Array.isArray(agentIds) ? agentIds.map(String) : [])
+})
+
+ipcMain.handle('skillBoard:read', async (_event, placeId: string, name: string) => {
+  const { readAt } = await import('../src/core/skill-board/board-service')
+  return readAt(String(placeId || 'local'), String(name))
+})
+
+ipcMain.handle('skillBoard:save', async (_event, placeId: string, name: string, text: string) => {
+  const { saveAt } = await import('../src/core/skill-board/board-service')
+  return saveAt(String(placeId || 'local'), String(name), String(text))
+})
+
+ipcMain.handle('skillBoard:send', async (_event, fromId: string, toId: string, name: string, overwrite: boolean, agentIds?: string[]) => {
+  const { sendSkill } = await import('../src/core/skill-board/board-service')
+  return sendSkill(String(fromId), String(toId), String(name), Boolean(overwrite), Array.isArray(agentIds) ? agentIds.map(String) : undefined)
+})
+
+ipcMain.handle('skillBoard:history', async (_event, placeId: string, name: string) => {
+  const { historyAt } = await import('../src/core/skill-board/board-service')
+  return historyAt(String(placeId || 'local'), String(name))
+})
+
+ipcMain.handle('skillBoard:restore', async (_event, placeId: string, name: string, versionId: string) => {
+  const { restoreAt } = await import('../src/core/skill-board/board-service')
+  return restoreAt(String(placeId || 'local'), String(name), String(versionId))
+})
+
+ipcMain.handle('skillBoard:trash', async (_event, placeId: string, name: string) => {
+  const { trashAt } = await import('../src/core/skill-board/board-service')
+  return trashAt(String(placeId || 'local'), String(name))
+})
+
+ipcMain.handle('skillBoard:trashList', async (_event, placeId: string) => {
+  const { trashListAt } = await import('../src/core/skill-board/board-service')
+  return trashListAt(String(placeId || 'local'))
+})
+
+ipcMain.handle('skillBoard:untrash', async (_event, placeId: string, id: string) => {
+  const { untrashAt } = await import('../src/core/skill-board/board-service')
+  return untrashAt(String(placeId || 'local'), String(id))
+})
+
+ipcMain.handle('skillBoard:translate', async (_event, placeId: string, name: string, text: string) => {
+  const { translateSkillMarkdown } = await import('../src/core/skill-board/translate')
+  const os = await import('os')
+  return translateSkillMarkdown(String(text ?? ''), {
+    home: os.homedir(),
+    placeId: String(placeId || 'local'),
+    name: String(name || ''),
+  })
+})
+
+ipcMain.handle('skillBoard:compare', async (_event, placeId: string) => {
+  const { compareAll } = await import('../src/core/skill-board/board-service')
+  return compareAll(String(placeId || 'local'))
+})
+
+ipcMain.handle('skillBoard:guide', async (_event, placeId: string, agentId: string, on: boolean) => {
+  const { guideAt } = await import('../src/core/skill-board/board-service')
+  return guideAt(String(placeId || 'local'), String(agentId), Boolean(on))
+})
+
+ipcMain.handle('skillBoard:holders', async (_event, placeId: string, name: string) => {
+  const { skillHolders } = await import('../src/core/skill-board/board-service')
+  return skillHolders(String(placeId || 'local'), String(name))
+})
+
+ipcMain.handle('skillBoard:reflect', async (_event, placeId: string, name: string, toIds: string[]) => {
+  const { reflectSkill } = await import('../src/core/skill-board/board-service')
+  return reflectSkill(String(placeId || 'local'), String(name), Array.isArray(toIds) ? toIds.map(String) : [])
+})
+
 // ═══════════════════════════════════════════
 // Operations center
 // ═══════════════════════════════════════════

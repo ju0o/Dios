@@ -1,179 +1,62 @@
-# DIOS - Document Intelligence & Organization System
+# DIOS — 스킬 보드
 
-> 로컬 중심의 AI 에이전트 모니터링 및 문서 관리 시스템
+AI 에이전트가 쓰는 스킬(`SKILL.md`)을 한 곳에 두고, 눌러서 붙이고, 한글로 읽고, 다른 컴퓨터와 맞추는 Windows 데스크톱 앱입니다.
 
-![DIOS](https://img.shields.io/badge/version-0.1.0-blue)
-![Electron](https://img.shields.io/badge/Electron-33.2.1-47848F?logo=electron)
-![React](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.7.2-3178C6?logo=typescript)
+Claude, Claude Team, Claude Pro, Codex, Cursor, Grok, Cline, CommandCode, OpenCode, Agent Relay처럼 에이전트마다 스킬 폴더가 따로 있으면, 같은 글을 여러 번 복사하고 어느 게 최신인지 잊게 됩니다. DIOS는 스킬 파일을 한 곳에만 두고 각 에이전트 폴더에는 바로가기만 걸어 줍니다. 그래서 글을 한 번 고치면 붙어 있는 모든 에이전트가 같은 글을 봅니다.
 
-## 🎯 개요
+![스킬 보드](docs/media/skill-board.png)
 
-DIOS는 **로컬 우선(Local-First)** 철학을 기반으로 하는 AI 에이전트 모니터링 및 문서 관리 시스템입니다. 여러 AI 서비스의 사용량을 실시간으로 추적하고, 프로젝트 문서와 스킬을 체계적으로 관리합니다.
+## 소개 영상
 
-## ✨ 주요 기능
+[![DIOS 소개 영상](docs/media/dios-intro-thumb.jpg)](docs/media/dios-intro.mp4)
 
-### 🤖 Agent Monitor (에이전트 모니터)
+약 1분짜리 소개 영상입니다. 그림을 누르면 영상이 열립니다. 영상 속 화면은 실제 앱 화면입니다.
 
-구독형 및 API 기반 AI 서비스의 사용량을 실시간으로 추적합니다.
+## 무엇을 할 수 있나요
 
-**지원 서비스:**
+**스킬별로 보기** — 왼쪽에서 스킬을 고르면 오른쪽에 설명, 붙은 에이전트, 같이 붙어 있는 스킬, 글이 한 화면에 나옵니다. 스킬 이름 옆 숫자는 몇 곳에 붙어 있는지입니다.
 
-| 서비스 | 방식 | 추적 방법 |
-|--------|------|-----------|
-| **OpenAI** | API 키 | ✅ 실시간 API 조회 |
-| **Codex** | ChatGPT Plus/Pro 구독 | ⚠️ 로컬 세션 로그 파싱 |
-| **Claude Code** | Claude Pro/Max 구독 | ⚠️ 로컬 세션 로그 파싱 |
-| **OpenRouter** | API 키 | ✅ 실시간 API 조회 |
-| **CommandCode** | API 키 | ✅ 실시간 API 조회 |
-| **OpenCode** | 구독 | ⚠️ 콘솔 수동 추적 |
-| **Qwen Studio** | API 키 | ✅ 실시간 API 조회 |
-| **Goose** | OpenRouter 연동 | ✅ 실시간 API 조회 |
+**눌러서 붙이기** — 붙은 에이전트 줄에서 이름을 누르면 붙고, 다시 누르면 빠집니다. 빼도 스킬 글은 남습니다. 폴더를 찾아 복사할 일이 없습니다.
 
-**에이전트 펫 위젯:**
-- 사용량에 따라 반응하는 귀여운 캐릭터
-- 🎉 여유 → 🚴 순조로움 → 💦 빡빡 → 😱 위험 → 💀 초과
-- 실시간 상태 메시지로 현재 상황 파악
+**에이전트별로 보기** — 에이전트마다 카드가 하나씩 있고, 스킬을 카드 위로 끌어다 놓으면 붙습니다. 매 대화마다 스킬 안내를 넣을지도 카드에서 켜고 끕니다.
 
-**사용량 대시보드:**
-- 서비스별 게이지 바 (일/주/월 사용량)
-- 리셋까지 남은 일수
-- 마지막 갱신 시각
-- Skills 및 Markdown 파일 카운터
+![에이전트별 보기](docs/media/agents-view.png)
 
-### 📁 프로젝트 관리
+**번역본 보기** — 영어 스킬을 한글로 읽습니다. 번역은 내 컴퓨터 안의 무료 모델(Ollama, `qwen2.5:3b`)이 하고, 스킬 글은 밖으로 나가지 않습니다. 한 번 번역한 글은 이 컴퓨터에 저장돼서 다음부터는 바로 열리고, 영어 원문이 바뀌면 그때만 다시 번역합니다. 에이전트에게는 항상 영어 원문이 갑니다. 3B 크기 모델이라 번역이 매끄럽지 않은 줄이 있을 수 있습니다.
 
-- 프로젝트별 문서 및 리소스 관리
-- 폴더 연결 (Skills, Memory, 프로젝트 자료)
-- 프로젝트 내보내기/가져오기 (JSON 형식)
-- 프로젝트 운영지침(Runbook) 관리
+![번역본 보기](docs/media/korean-copy.png)
 
-### 🔍 문서 스캔 및 검색
+**글 고치기와 이전 글** — 앱 안에서 스킬 글을 고칩니다. 고치기 전 글은 남아서 **이전 글**에서 되돌릴 수 있습니다. 밖에서 파일이 바뀌면 노란 **바뀜** 표시와 함께 바뀐 줄을 보여 줍니다.
 
-- 로컬 폴더 스캔을 통한 문서 자동 감지
-- Markdown, JSON, YAML 등 다양한 형식 지원
-- 전문 검색(Full-Text Search) 기능
-- 메타데이터 기반 필터링
+**휴지통** — 지운 스킬은 휴지통에 들어가고, 다시 꺼내면 원래 붙어 있던 곳에 다시 붙습니다.
 
-### 🌳 파일 탐색기
+**컴퓨터끼리 비교** — 이 컴퓨터, WSL, SSH로 연결된 컴퓨터의 스킬을 한 표로 비교합니다. 글이 다르면 맞추고, 없는 곳에는 보내고, 이쪽에 없으면 가져옵니다. 글이 같으면 덮어쓰지 않습니다.
 
-- 트리 구조로 프로젝트 파일 탐색
-- 실시간 파일 내용 미리보기
-- 빠른 파일 검색 및 필터링
+## 설치
 
-### 🧠 Skills & Memory 관리
+1. [Releases](https://github.com/ju0o/Dios/releases)에서 `DIOS-설치.exe`를 받습니다. (아직 릴리스가 없다면 아래 **직접 만들기**를 보세요.)
+2. 실행합니다. 서명이 없는 설치 파일이어서 Windows가 막으면 **추가 정보 → 실행**을 누릅니다.
+3. 열면 첫 화면이 스킬 보드입니다.
 
-- 재사용 가능한 스킬 관리
-- 영구 메모리 저장소
-- 스킬 간 관계도 시각화
+번역본을 쓰려면 [Ollama](https://ollama.com)가 설치되어 있어야 합니다. DIOS가 필요할 때 Ollama를 켜고, 모델이 없으면 `qwen2.5:3b`(약 2GB)를 한 번 내려받습니다. 결제나 API 키는 필요 없습니다.
 
-### 📊 실험 및 의사결정
+지금은 Windows 설치 파일만 있습니다. 스킬 파일은 `~/.agents/skills/<이름>/SKILL.md`에 있고, 각 에이전트 폴더에는 바로가기(심볼릭 링크 또는 정션)가 만들어집니다. WSL과 SSH 컴퓨터도 같은 구조입니다.
 
-- 실험 상태 머신 (DRAFT → APPROVED → RUNNING → COMPLETED)
-- 의사결정 기록 (블록체인 스타일 체인)
-- Human Gate (승인 게이트) 시스템
-
-### 🛡️ 비상 정지 (Emergency Stop)
-
-- 모든 AI 에이전트 작업 즉시 중단
-- 글로벌 비상 정지 버튼
-- 안전 모드 전환
-
-## 🚀 설치 및 실행
-
-### 사전 요구사항
-
-- Node.js 18+
-- npm 또는 yarn
-
-### 설치
+## 직접 만들기
 
 ```bash
-# 저장소 클론
 git clone https://github.com/ju0o/Dios.git
 cd Dios
-
-# 의존성 설치
 npm install
+npm run dev      # 개발 실행
+npm run build    # release/DIOS-설치.exe
+npm test         # 스킬 보드 테스트
 ```
 
-### 개발 모드
+## 기술
 
-```bash
-npm run dev
-```
+Electron 33, React 18, TypeScript, Vite, SQLite(better-sqlite3), electron-builder(NSIS). 번역은 Ollama HTTP API(`127.0.0.1:11434`)를 씁니다. 외부 서버로 가는 데이터는 없습니다.
 
-### 프로덕션 빌드
+## 라이선스
 
-```bash
-npm run build
-```
-
-빌드된 앱은 `release/` 폴더에서 확인할 수 있습니다.
-
-## 📁 프로젝트 구조
-
-```
-DIOS/
-├── electron/              # Electron 메인 프로세스
-│   ├── main.ts           # 메인 프로세스 진입점
-│   ├── preload.ts        # 프리로드 스크립트
-│   └── db/
-│       └── schema.ts     # SQLite 스키마
-├── src/
-│   ├── core/             # 핵심 비즈니스 로직
-│   │   ├── agent-monitor/    # 에이전트 모니터링
-│   │   ├── ai-resource/      # AI 리소스 관리
-│   │   ├── scanner/          # 파일 스캐너
-│   │   ├── graph/            # 그래프 빌더
-│   │   ├── experiment/       # 실험 관리
-│   │   ├── decision/         # 의사결정 기록
-│   │   └── human-gate/       # Human Gate
-│   └── renderer/         # React 렌더러
-│       ├── pages/        # 페이지 컴포넌트
-│       ├── components/   # 공통 컴포넌트
-│       └── stores/       # 상태 관리
-└── package.json
-```
-
-## 🎨 디자인 철학
-
-- **Cinematic Dark**: 시네마틱 다크 테마
-- **Glassmorphism**: 글래스모피즘 UI
-- **Apple Minimal**: 애플 스타일의 미니멀 디자인
-- **Local-First**: 모든 데이터는 로컬에 저장
-- **Privacy-First**: API 키는 암호화되어 로컬에만 저장
-
-## 🔐 보안
-
-- API 키는 SQLite DB에 암호화되어 저장
-- 모든 데이터는 로컬에서만 처리
-- 외부 서버 통신 최소화
-- Context Isolation 활성화
-
-## 🛠️ 기술 스택
-
-- **Electron** - 크로스 플랫폼 데스크톱 앱
-- **React 18** - UI 프레임워크
-- **TypeScript** - 타입 안전성
-- **Tailwind CSS** - 스타일링
-- **SQLite (better-sqlite3)** - 로컬 데이터베이스
-- **Vite** - 빌드 도구
-- **Cytoscape** - 그래프 시각화
-
-## 📝 라이선스
-
-MIT License
-
-## 🤝 기여
-
-이슈 및 PR 환영합니다!
-
-## 📞 문의
-
-- GitHub Issues: https://github.com/ju0o/Dios/issues
-- Email: ju0@example.com
-
----
-
-**Made with ❤️ by ju0o**
+라이선스는 아직 정하지 않았습니다. 코드는 볼 수 있지만, 재배포나 상업적 이용은 정해진 뒤에 문의해 주세요.

@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 type CommandPaletteProps = { onNavigate: (view: string) => void }
 
 const commands = [
+  ['skillBoard', '스킬 보드', '에이전트에 스킬 붙이고 빼기', '✧'],
+  ['agentMonitor', '사용량', 'AI 사용량 보기', '◔'],
   ['home', '프로젝트 홈', '현재 Phase와 다음 행동 보기', '⌂'],
   ['project-data', '프로젝트 자료', '폴더·Skills·Memory 연결 관리', '⌗'],
   ['changes', '변경사항 확인', 'Git 변경 목록과 테스트 결과', '⌁'],
