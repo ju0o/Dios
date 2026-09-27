@@ -8,9 +8,11 @@ Claude, Claude Team, Claude Pro, Codex, Cursor, Grok, Cline, CommandCode, OpenCo
 
 ## 소개 영상
 
-[![DIOS 소개 영상](docs/media/dios-intro-thumb.jpg)](docs/media/dios-intro.mp4)
+[![DIOS 소개 영상](https://img.youtube.com/vi/IQigOMQEUk4/hqdefault.jpg)](https://youtu.be/IQigOMQEUk4)
 
-약 1분짜리 소개 영상입니다. 그림을 누르면 영상이 열립니다. 영상 속 화면은 실제 앱 화면입니다.
+약 1분짜리 소개 영상입니다. 그림을 누르면 유튜브에서 열립니다. 영상 속 화면은 실제 앱 화면입니다.
+
+https://youtu.be/IQigOMQEUk4
 
 ## 무엇을 할 수 있나요
 
