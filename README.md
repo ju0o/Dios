@@ -38,7 +38,7 @@ https://youtu.be/IQigOMQEUk4
 
 ## 설치
 
-1. [Releases](https://github.com/ju0o/Dios/releases)에서 `DIOS-설치.exe`를 받습니다.
+1. [Releases](https://github.com/ju0o/Dios/releases/latest)에서 `DIOS-Setup.exe`를 받습니다.
 2. 실행합니다. 서명이 없는 파일이라 Windows가 막으면 **추가 정보 → 실행**을 누릅니다.
 3. 열리면 첫 화면이 스킬 보드입니다.
 
