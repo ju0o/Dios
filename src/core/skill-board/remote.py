@@ -122,7 +122,7 @@ def read_watch() -> dict:
 
 def write_watch(watch: dict) -> None:
     watch_path().parent.mkdir(parents=True, exist_ok=True)
-    watch_path().write_text(json.dumps(watch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    watch_path().write_text(json.dumps(watch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 def hash_text(text: str) -> str:
@@ -262,7 +262,7 @@ def set_translation() -> dict:
     if not text.endswith("\n"):
         text += "\n"
     tmp = dest.with_suffix(".json.dios-tmp")
-    tmp.write_text(json.dumps({"print": print_value, "text": text}, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps({"print": print_value, "text": text}, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     os.replace(tmp, dest)
     return {"ok": True, "message": "번역본을 두었어요."}
 
@@ -601,7 +601,7 @@ def read_usage() -> dict:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             merged = dict(known) if isinstance(known, dict) else {}
             merged.update(nxt)
-            cache_file.write_text(json.dumps({"version": 2, "files": merged}), encoding="utf-8")
+            cache_file.write_text(json.dumps({"version": 2, "files": merged}), encoding="utf-8", newline="\n")
         except OSError:
             pass
 
@@ -679,7 +679,7 @@ def finish_relay(skill: str, attached: bool) -> dict:
     touched = apply_relay(portfolio, skill, attached)
     if touched:
         tmp = path.with_suffix(".json.dios-tmp")
-        tmp.write_text(json.dumps(portfolio, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.write_text(json.dumps(portfolio, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         os.replace(tmp, path)
     if attached:
         return result(True, f"Agent Relay 작업 {touched}곳에 붙였어요." if touched else "Agent Relay에 이미 붙어 있어요.")
@@ -804,7 +804,7 @@ def create_skill() -> dict:
     body = "\n".join(f"- {step}" for step in steps)
     text = f"---\nname: {name}\ndescription: {summary}\n---\n\n# {name}\n\n{body}\n"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
+    dest.write_text(text, encoding="utf-8", newline="\n")
     remember_skill(name, text)
     extra = attach_summary(*attach_many(name, [str(i) for i in data.get("agentIds") or []]))
     return result(True, f"스킬을 등록했어요. {extra}" if extra else "스킬을 등록했어요. 에이전트 카드에서 붙이면 돼요.")
@@ -883,7 +883,7 @@ def keep_history(name: str, text: str) -> None:
     dest = folder / f"{stamp()}.md"
     while dest.exists():
         dest = folder / f"{int(dest.stem.split('-')[0]) + 1}.md"
-    dest.write_text(text, encoding="utf-8")
+    dest.write_text(text, encoding="utf-8", newline="\n")
     for old in sorted(folder.glob("*.md"))[:-HISTORY_KEEP]:
         try:
             old.unlink()
@@ -924,7 +924,7 @@ def restore_version(name: str, version: str) -> dict:
     if current == old:
         return result(True, "지금 글과 같아요.")
     keep_history(name, current)
-    dest.write_text(old, encoding="utf-8")
+    dest.write_text(old, encoding="utf-8", newline="\n")
     remember_skill(name, old)
     return result(True, "이전 글로 되돌렸어요. 방금 글도 이전 글에 보관했어요.")
 
@@ -947,7 +947,7 @@ def trash_skill(name: str) -> dict:
     item_id = f"{name}--{stamp()}"
     shutil.move(str(src), str(trash_dir() / item_id))
     meta = {"name": name, "when": int(item_id.rsplit("--", 1)[1]), "agents": removed}
-    (trash_dir() / f"{item_id}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    (trash_dir() / f"{item_id}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8", newline="\n")
     return result(True, "휴지통으로 옮겼어요. 휴지통에서 다시 꺼낼 수 있어요.")
 
 
@@ -1014,7 +1014,7 @@ def save_skill() -> dict:
         return result(False, "스킬 이름 줄이 있어야 저장돼요.")
     previous = read_text(dest)
     keep_history(name, previous)
-    dest.write_text(text, encoding="utf-8")
+    dest.write_text(text, encoding="utf-8", newline="\n")
     remember_skill(name, text)
     old = {line.strip() for line in previous.split("\n") if line.strip()}
     new = {line.strip() for line in text.split("\n") if line.strip()}
@@ -1068,7 +1068,7 @@ def import_skill(overwrite: bool) -> dict:
         if dest != base and base not in dest.parents:
             return result(False, "스킬 안에 이상한 경로가 있어요.")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(str(item.get("text") or ""), encoding="utf-8")
+        dest.write_text(str(item.get("text") or ""), encoding="utf-8", newline="\n")
     text = str(skill["text"])
     remember_skill(name, text if text.endswith("\n") else text + "\n")
     return result(True, "그 컴퓨터의 스킬 글을 바꿨어요." if overwrite else "그 컴퓨터에 스킬을 보냈어요.")
@@ -1102,7 +1102,7 @@ def set_guide(agent_id: str, on: bool) -> dict:
             except OSError:
                 pass
         else:
-            file.write_text(kept + "\n", encoding="utf-8")
+            file.write_text(kept + "\n", encoding="utf-8", newline="\n")
         return result(True, "매 대화 안내를 껐어요.")
     block = guide_text()
     if spec[2]:
@@ -1110,7 +1110,7 @@ def set_guide(agent_id: str, on: bool) -> dict:
     base = (current[: current.index(MARKER)] if enabled else current).rstrip()
     nxt = f"{base}\n\n{block}" if base else block
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(nxt if nxt.endswith("\n") else nxt + "\n", encoding="utf-8")
+    file.write_text(nxt if nxt.endswith("\n") else nxt + "\n", encoding="utf-8", newline="\n")
     return result(True, "매 대화 안내를 켰어요.")
 
 
