@@ -92,6 +92,23 @@ describe('remote helper matches the local model', () => {
     expect(fs.existsSync(path.join(home, '.claude', 'skills', 'weekly-report'))).toBe(false)
   })
 
+  it.skipIf(!hasPython)('keeps a Korean copy sent from another computer only for the same English text', () => {
+    const home = makeHome()
+    const print = runPython(home, ['board']).board.skills[0].print
+    const env = { ...process.env, HOME: home, DIOS_HOME: home }
+    const read = () => JSON.parse(execFileSync('python3', ['-', 'translation', 'demo-skill'], { input: remoteScript, env, encoding: 'utf8' }))
+    expect(read().ok).toBe(false)
+
+    fs.writeFileSync(path.join(home, '.dios-pack.json'), JSON.stringify({ name: 'demo-skill', print: 'stale', text: '---\ndescription: 옛 글\n---\n' }))
+    expect(runPython(home, ['settranslation']).ok).toBe(false)
+    expect(read().ok).toBe(false)
+
+    fs.writeFileSync(path.join(home, '.dios-pack.json'), JSON.stringify({ name: 'demo-skill', print, text: '---\nname: demo-skill\ndescription: 보고를 짧게 정리해요.\n---\n# 데모\n' }))
+    expect(runPython(home, ['settranslation']).ok).toBe(true)
+    expect(read()).toMatchObject({ ok: true, print })
+    expect(runPython(home, ['board']).board.skills[0].koreanSummary).toBe('보고를 짧게 정리해요.')
+  })
+
   it.skipIf(!hasPython)('gives the same text fingerprint as the local model', () => {
     const home = makeHome()
     expect(runPython(home, ['board']).board.skills[0].print).toBe(loadBoard(home).skills[0].print)

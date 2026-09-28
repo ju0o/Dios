@@ -2,16 +2,30 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { MarkdownViewer } from '../components/MarkdownViewer'
 import type { BoardAgent, BoardSkill } from '../../core/skill-board/model'
 import type { Place } from '../../core/skill-board/places'
+import { driftLine } from '../../core/skill-board/drift'
+import { projectsUsingSkill, type ProjectSkills } from '../../core/skill-board/project-skills'
 import { boardApi, matchesSearch, type BoardResult, type SkillBoard } from './skill-board-api'
-import { splitSkillText } from '../../core/skill-board/markdown-text'
+import { koreanBlurbFromText, retryRows, splitSkillText } from '../../core/skill-board/markdown-text'
 import { ComparePanel, HistoryPanel, IntroGuide, TrashPanel } from './SkillBoardPanels'
 
-type Notice = { ok: boolean; text: string } | null
-type Panel = 'none' | 'trash' | 'compare'
+type Notice = { ok: boolean; text: string; folder?: string } | null
+type Panel = 'none' | 'trash' | 'compare' | 'projects'
 type BoardView = 'skills' | 'agents'
 type ReadMode = 'read' | 'korean' | 'edit' | 'history'
 
 const INTRO_KEY = 'dios.skillBoard.introDone'
+/** The library writes a skill name here right before switching to this screen. */
+export const OPEN_KEY = 'dios.skillBoard.open'
+
+function takeOpenRequest(): string {
+  try {
+    const name = window.localStorage.getItem(OPEN_KEY) || ''
+    if (name) window.localStorage.removeItem(OPEN_KEY)
+    return name
+  } catch {
+    return ''
+  }
+}
 
 function introDone(): boolean {
   try {
@@ -59,8 +73,34 @@ export function SkillBoardView() {
   const [savedKorean, setSavedKorean] = useState(false)
   const [translating, setTranslating] = useState(false)
   const [translateError, setTranslateError] = useState('')
+  const [retryingLine, setRetryingLine] = useState('')
   const translateSeq = useRef(0)
   const [descOpen, setDescOpen] = useState(false)
+  const [pickedSkills, setPickedSkills] = useState<string[]>([])
+  const [drift, setDrift] = useState(0)
+  const [projects, setProjects] = useState<ProjectSkills[]>([])
+
+  useEffect(() => {
+    const api = boardApi()
+    if (!api?.onSkillDrift) return
+    void api.skillBoardDrift().then((result) => setDrift(result.count)).catch(() => {})
+    return api.onSkillDrift((payload) => setDrift(payload.count))
+  }, [])
+
+  async function alignEverywhere() {
+    const api = boardApi()
+    if (!api) return
+    setBusy(true)
+    try {
+      const result = await api.skillBoardAlignAll()
+      setDrift(result.left)
+      setNotice({ ok: result.ok, text: result.message })
+    } catch {
+      setNotice({ ok: false, text: '맞추지 못했어요. 다른 컴퓨터가 켜져 있는지 확인해 주세요.' })
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     setEditing(false)
@@ -74,6 +114,7 @@ export function SkillBoardView() {
     setDescOpen(false)
     setTranslating(false)
     setTranslateError('')
+    setRetryingLine('')
     translateSeq.current += 1
   }, [pinnedId, placeId])
 
@@ -116,11 +157,19 @@ export function SkillBoardView() {
     setLoading(true)
     setBoard(null)
     setPinnedId(null)
+    setProjects([])
     try {
       const result = await api.skillBoardGet(id)
+      if (api.skillBoardProjects) {
+        const listed = await api.skillBoardProjects(id).catch(() => ({ ok: false, message: '', projects: [] as ProjectSkills[] }))
+        setProjects(listed.projects ?? [])
+      }
       if (result.ok) {
         setBoard(result.board)
         setFailed('')
+        // The library can hand over one skill to open here.
+        const wanted = takeOpenRequest()
+        if (wanted && result.board.skills.some((skill: BoardSkill) => skill.name === wanted)) setPinnedId(wanted)
       } else {
         setFailed(result.problem)
       }
@@ -132,6 +181,7 @@ export function SkillBoardView() {
   }, [])
 
   useEffect(() => { void refresh(placeId) }, [placeId, refresh])
+  useEffect(() => { setPickedSkills([]) }, [placeId])
 
   const pinned = board?.skills.find((skill) => skill.name === pinnedId) ?? null
   const currentPlace = placeList.find((place) => place.id === placeId)
@@ -140,6 +190,45 @@ export function SkillBoardView() {
     if (result.board.agents.length) setBoard(result.board)
     setNotice({ ok: result.ok, text: result.message })
     return result
+  }
+
+  function togglePicked(name: string) {
+    setPickedSkills((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
+  }
+
+  async function savePicked() {
+    const api = boardApi()
+    if (!api) return
+    setBusy(true)
+    try {
+      const result = await api.skillBoardSaveCopy(placeId, pickedSkills)
+      setNotice({ ok: result.ok, text: result.message, folder: result.folder })
+    } catch {
+      setNotice({ ok: false, text: '스킬을 저장하지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function makeReview() {
+    const api = boardApi()
+    if (!api) return
+    setBusy(true)
+    try {
+      const result = await api.skillBoardReviewPack(placeId, pickedSkills)
+      setNotice({ ok: result.ok, text: result.message, folder: result.folder })
+    } catch {
+      setNotice({ ok: false, text: '점검 글을 만들지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function openSaved(folder: string) {
+    const api = boardApi()
+    if (!api) return
+    const result = await api.skillBoardOpenFolder(folder)
+    if (!result.ok) setNotice({ ok: false, text: result.message })
   }
 
   async function registerSkill() {
@@ -210,13 +299,46 @@ export function SkillBoardView() {
         return
       }
       setKoreanText(result.text)
-      setSavedKorean(result.message.startsWith('저장해 둔') || result.message.startsWith('번역본을 저장') || result.message.startsWith('영어 글이 바뀌어서'))
+      setSavedKorean(result.message.startsWith('저장해 둔') || result.message.startsWith('번역본을 저장') || result.message.startsWith('영어 글이 바뀌어서') || result.message.startsWith('더 좋은 모델로'))
+      rememberKorean(name, result.text)
       setNotice({ ok: true, text: result.message })
     } catch {
       if (seq !== translateSeq.current) return
       setTranslateError('번역하지 못했어요. 다시 번역을 눌러 주세요.')
     } finally {
       if (seq === translateSeq.current) setTranslating(false)
+    }
+  }
+
+  function rememberKorean(name: string, text: string) {
+    const blurb = koreanBlurbFromText(text)
+    if (!blurb) return
+    setBoard((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        skills: current.skills.map((skill) => (skill.name === name ? { ...skill, koreanSummary: blurb } : skill)),
+      }
+    })
+  }
+
+  async function retryLine(name: string, target: 'description' | number) {
+    const api = boardApi()
+    if (!api || !readText || !koreanText) return
+    const key = String(target)
+    setRetryingLine(key)
+    try {
+      const result = await api.skillBoardRetranslateLine(placeId, name, readText, koreanText, target)
+      setNotice({ ok: result.ok, text: result.message })
+      if (result.ok) {
+        setKoreanText(result.text)
+        setSavedKorean(true)
+        rememberKorean(name, result.text)
+      }
+    } catch {
+      setNotice({ ok: false, text: '이 줄 번역이 중간에 멈췄어요. 한 번 더 눌러 주세요.' })
+    } finally {
+      setRetryingLine('')
     }
   }
 
@@ -273,6 +395,20 @@ export function SkillBoardView() {
       else if (result.message === '이미 있어요.') setReplaceAsk(true)
     } catch {
       setNotice({ ok: false, text: '보내지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function shareTranslation(name: string) {
+    const api = boardApi()
+    if (!api) return
+    setBusy(true)
+    try {
+      const result = await api.skillBoardSendTranslation(placeId, name, otherPlaces.map((place) => place.id))
+      setNotice({ ok: result.ok, text: result.message })
+    } catch {
+      setNotice({ ok: false, text: '번역본을 보내지 못했어요. 다시 시도해 주세요.' })
     } finally {
       setBusy(false)
     }
@@ -464,6 +600,7 @@ export function SkillBoardView() {
 
   const changedCount = board.skills.filter((skill) => skill.changed).length
   const shownSkills = board.skills.filter((skill) => matchesSearch(skill, search))
+  const allShownPicked = shownSkills.length > 0 && shownSkills.every((skill) => pickedSkills.includes(skill.name))
   const readyAgents = board.agents.filter((agent) => agent.ready)
   const readMode: ReadMode = editing ? 'edit' : historyOpen ? 'history' : showKorean ? 'korean' : 'read'
   const shownText = splitSkillText(showKorean ? koreanText : readText)
@@ -474,13 +611,25 @@ export function SkillBoardView() {
   return (
     <section className="skill-board">
       {placeTabs}
+      {drift > 0 && (
+        <p className="skill-toast bad" role="status">
+          {driftLine(drift)}
+          <button type="button" className="skill-link" disabled={busy} onClick={() => void alignEverywhere()}>이 컴퓨터 기준으로 맞추기</button>
+        </p>
+      )}
+
       <header className="skill-top">
         <p className="skill-lead">
           {currentPlace && currentPlace.kind !== 'local' ? `${currentPlace.name}의 ` : ''}스킬 {board.skills.length}개, 연결된 에이전트 {readyAgents.length}곳이에요.
-          {' '}스킬을 누르면 오른쪽에서 읽고, 붙이고, 고쳐요.
+          {' '}누르면 읽고 붙일 수 있고, 고른 스킬은 바탕화면에 저장해요.
         </p>
         <div className="skill-toolbar">
           <button type="button" className="skill-action primary" onClick={() => setCreating((open) => !open)}>{creating ? '등록 닫기' : '새 스킬 등록'}</button>
+          <button type="button" className="skill-action" disabled={busy} onClick={() => void savePicked()}>고른 스킬 저장</button>
+          <button type="button" className="skill-action" disabled={busy} onClick={() => void makeReview()}>점검 글 만들기</button>
+          <button type="button" className="skill-action" aria-pressed={panel === 'projects'} onClick={() => setPanel((open) => open === 'projects' ? 'none' : 'projects')}>
+            {panel === 'projects' ? '프로젝트 닫기' : '프로젝트 스킬'}
+          </button>
           {placeList.length > 1 && (
             <button type="button" className="skill-action" aria-pressed={panel === 'compare'} onClick={() => setPanel((open) => open === 'compare' ? 'none' : 'compare')}>
               {panel === 'compare' ? '비교 닫기' : '컴퓨터끼리 비교'}
@@ -508,6 +657,28 @@ export function SkillBoardView() {
           <button type="button" className="skill-action" disabled={busy} onClick={() => void guideAll(guideAsk === 'on')}>{guideAsk === 'on' ? '모두 켜기' : '모두 끄기'}</button>
         </div>
       )}
+      {panel === 'projects' && (
+        <div className="project-skills">
+          {projects.length === 0 && <p className="skill-quiet">이 컴퓨터의 Agent Relay에는 프로젝트에 붙은 스킬이 없어요.</p>}
+          {projects.map((project) => (
+            <section key={project.id} className="skill-card project-skill" aria-label={`${project.label} 스킬`}>
+              <header className="key-group-head">
+                <h2>{project.label}</h2>
+                <small>스킬 {project.skills.length}개</small>
+              </header>
+              <ul className="project-skill-list">
+                {project.skills.map((skill) => (
+                  <li key={skill.name}>
+                    <button type="button" className="skill-link" onClick={() => { openSkill(skill.name, 'read'); setPanel('none') }}>{skill.name}</button>
+                    <span className="skill-quiet">{skill.lanes.join(' · ')}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+
       {panel === 'compare' && boardApi() && (
         <ComparePanel api={boardApi()!} placeId={placeId} busy={busy} onPick={pickFromCompare} onChanged={(result) => { setNotice({ ok: result.ok, text: result.message }); void reloadQuiet() }} />
       )}
@@ -536,7 +707,20 @@ export function SkillBoardView() {
           <button type="submit" className="skill-action primary" disabled={busy}>등록하고 붙이기</button>
         </form>
       )}
-      {notice && <p className={notice.ok ? 'skill-toast ok' : 'skill-toast bad'} role="status">{notice.text}</p>}
+      {notice && (
+        <div className={notice.ok ? 'skill-toast ok' : 'skill-toast bad'} role="status">
+          <p>{notice.text}</p>
+          {notice.folder && (
+            <>
+              <button type="button" className="skill-link" onClick={() => void openSaved(notice.folder || '')}>폴더 열기</button>
+              <details className="skill-raw">
+                <summary>원문 보기</summary>
+                <span>{notice.folder}</span>
+              </details>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="skill-views" role="tablist" aria-label="보는 방법">
         <button type="button" role="tab" aria-selected={view === 'skills'} className={view === 'skills' ? 'is-on' : ''} onClick={() => setView('skills')}>스킬별로 보기</button>
@@ -590,6 +774,15 @@ export function SkillBoardView() {
               <span className="sr-only">스킬 찾기</span>
               <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="스킬 찾기" />
             </label>
+            {shownSkills.length > 0 && (
+              <button
+                type="button"
+                className="skill-link"
+                onClick={() => setPickedSkills(allShownPicked ? pickedSkills.filter((name) => !shownSkills.some((skill) => skill.name === name)) : [...new Set([...pickedSkills, ...shownSkills.map((skill) => skill.name)])])}
+              >
+                {allShownPicked ? '고르기 해제' : '보이는 스킬 모두 고르기'}
+              </button>
+            )}
             {changedCount > 0 && <p className="skill-quiet">글이 바뀐 스킬 {changedCount}개 · 노란 표시예요.</p>}
             <ul
               className="skill-list"
@@ -601,7 +794,15 @@ export function SkillBoardView() {
                 <li className="skill-quiet">"{search.trim()}"에 맞는 스킬이 없어요. <button type="button" className="skill-link" onClick={() => setSearch('')}>찾기 지우기</button></li>
               )}
               {shownSkills.map((skill) => (
-                <li key={skill.name}>
+                <li key={skill.name} className="skill-pick">
+                  <label className="skill-pick-box">
+                    <input
+                      type="checkbox"
+                      checked={pickedSkills.includes(skill.name)}
+                      aria-label={`${skill.name} 고르기`}
+                      onChange={() => togglePicked(skill.name)}
+                    />
+                  </label>
                   <button
                     type="button"
                     draggable
@@ -614,6 +815,7 @@ export function SkillBoardView() {
                     }}
                   >
                     <span className="skill-row-name">{skill.name}</span>
+                    {skill.koreanSummary && <span className="skill-row-ko">{skill.koreanSummary}</span>}
                     <span className="skill-row-meta">
                       {skill.changed && <i className="skill-badge">바뀜</i>}
                       <span>{skill.agents.length ? `${skill.agents.length}곳에 붙음` : '안 붙음'}</span>
@@ -630,6 +832,9 @@ export function SkillBoardView() {
                 <header className="skill-detail-head">
                   <div>
                     <h2>{pinned.name}</h2>
+                    {projectsUsingSkill(projects, pinned.name).length > 0 && (
+                      <p className="skill-quiet">이 스킬을 쓰는 프로젝트: {projectsUsingSkill(projects, pinned.name).join(', ')}</p>
+                    )}
                     {skillLine && (
                       <button type="button" className={`skill-desc ${descOpen ? 'is-open' : ''}`} aria-expanded={descOpen} onClick={() => setDescOpen((open) => !open)}>
                         {skillLine}
@@ -716,7 +921,23 @@ export function SkillBoardView() {
                   </div>
                 )}
                 {readMode === 'korean' && !translating && !translateError && koreanText && (
-                  <MarkdownViewer className="skill-md" content={shownText.body} />
+                  <>
+                    <MarkdownViewer className="skill-md" content={shownText.body} />
+                    <LineFix
+                      source={readText}
+                      korean={koreanText}
+                      busy={busy || Boolean(retryingLine)}
+                      retrying={retryingLine}
+                      onRetry={(target) => void retryLine(pinned.name, target)}
+                    />
+                    {otherPlaces.length > 0 && (
+                      <div className="skill-toolbar">
+                        <button type="button" className="skill-action" disabled={busy} onClick={() => void shareTranslation(pinned.name)}>
+                          이 번역본을 다른 컴퓨터 {otherPlaces.length}곳에도 두기
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
                 {readMode === 'read' && (
                   readText
@@ -778,7 +999,7 @@ export function SkillBoardView() {
                   ) : (
                     <button type="button" className="skill-link" disabled={busy} onClick={() => setTrashAsk(true)}>이 스킬 지우기</button>
                   )}
-                  <p className="skill-quiet">영어 원문은 그대로 에이전트에 가요. 번역본은 이 컴퓨터에만 저장돼서, 같은 글은 다시 번역하지 않아요.</p>
+                  <p className="skill-quiet">영어 원문은 그대로 에이전트에 가요. 번역본은 이 컴퓨터에만 저장되고, 왼쪽 목록에도 한 줄로 보여요. 어색한 줄은 번역본 아래 ‘어색한 줄 고치기’에서 그 줄만 다시 받아요.</p>
                 </footer>
               </article>
             ) : (
@@ -807,6 +1028,44 @@ function relatedSkills(board: SkillBoard, skill: BoardSkill): string[] {
 
 function agentNames(agents: BoardAgent[], ids: string[]): string {
   return ids.map((id) => agents.find((agent) => agent.id === id)?.name ?? id).join(', ')
+}
+
+/** Saved Korean lines the Founder can send back one at a time. */
+function LineFix({
+  source,
+  korean,
+  busy,
+  retrying,
+  onRetry,
+}: {
+  source: string
+  korean: string
+  busy: boolean
+  retrying: string
+  onRetry: (target: 'description' | number) => void
+}) {
+  const { rows, aligned } = retryRows(source, korean)
+  if (!rows.length && aligned) return null
+  return (
+    <details className="skill-fold">
+      <summary>어색한 줄 고치기</summary>
+      {!aligned && <p className="skill-quiet">번역본 줄 수가 원문과 달라서, 본문 줄은 하나씩 다시 하기 어려워요. 번역본을 한 번 더 눌러 주세요.</p>}
+      <div className="skill-line-fix">
+        {rows.map((row) => {
+          const key = String(row.target)
+          const running = retrying === key
+          return (
+            <div key={key} className="skill-line-row">
+              <p>{row.text}</p>
+              <button type="button" className="skill-action" disabled={busy} onClick={() => onRetry(row.target)}>
+                {running ? '다시 번역하고 있어요' : '이 줄 다시'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </details>
+  )
 }
 
 function lineChange(before: string, after: string): string {

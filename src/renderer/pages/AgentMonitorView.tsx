@@ -1,558 +1,341 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { count, dollars, tokens, type UsageCard, type UsageScreen } from '../../core/agent-monitor/usage-summary'
+import { whenText } from './skill-board-api'
 
-interface AgentService {
-  id: string
-  name: string
-  type: string
-  apiKey: string
-  baseUrl?: string
-  monthlyCap: number
-  resetDay?: number
-  enabled: boolean
-  createdAt: number
-  updatedAt: number
-}
-
-interface AgentUsageSnapshot {
-  serviceId: string
-  serviceName: string
-  type: string
-  used: number
-  limit: number
-  remaining: number
-  percent: number
-  resetAt: number
-  currency: string
-  status: 'idle' | 'loading' | 'success' | 'error'
-  error?: string
-  fetchedAt: number
-  daily?: number
-  weekly?: number
-  monthly?: number
-}
-
-interface AgentPetState {
-  mood: 'happy' | 'running' | 'sweating' | 'panicking' | 'collapsed' | 'celebrating'
-  speed: number
+interface CapResult {
+  ok: boolean
   message: string
+  screen: UsageScreen | null
 }
 
-const SERVICE_TYPES = [
-  { value: 'openai', label: 'OpenAI (Codex 포함)' },
-  { value: 'openrouter', label: 'OpenRouter (Goose 등)' },
-  { value: 'claude_code', label: 'Claude Code' },
-  { value: 'codex', label: 'Codex CLI' },
-  { value: 'qwen_studio', label: 'Qwen Studio' },
-  { value: 'opencode', label: 'OpenCode' },
-  { value: 'commandcode', label: 'CommandCode' },
-  { value: 'goose', label: 'Goose' },
-  { value: 'hermes', label: 'Hermes' },
-]
+interface Progress {
+  done: number
+  total: number
+  place: string
+}
 
+interface UsageApi {
+  usageScreen: () => Promise<UsageScreen>
+  usageSetCap: (cardId: string, amount: number) => Promise<CapResult>
+  usageOpenLink: (url: string) => Promise<{ ok: boolean; message: string }>
+  onUsageProgress: (callback: (payload: Progress) => void) => () => void
+}
+
+function usageApi(): UsageApi | null {
+  const api = (window as unknown as { electronAPI?: Partial<UsageApi> }).electronAPI
+  return api?.usageScreen ? (api as UsageApi) : null
+}
+
+const TONE_CLASS: Record<UsageCard['tone'], string> = { ok: 'is-ok', watch: 'is-watch', over: 'is-over' }
+const TONE_WORD: Record<UsageCard['tone'], string> = { ok: '', watch: '정해 둔 금액에 가까워요', over: '정해 둔 금액을 넘었어요' }
+const KIND_WORD: Record<UsageCard['kind'], string> = { subscription: '구독', api: 'API 키', count: '횟수만', link: '사이트에서 확인' }
+const CAP_PRESETS = [20, 50, 100, 200]
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+
+/** "9/28 (월)" for a YYYY-MM-DD day. */
+function dayLabel(day: string): string {
+  const [year, month, date] = day.split('-').map(Number)
+  const weekday = WEEKDAYS[new Date(year, month - 1, date).getDay()]
+  return `${month}/${date} (${weekday})`
+}
+
+/** What the reading screen says while the first read is going on. */
+function progressLine(progress: Progress | null): string {
+  if (!progress) return ''
+  if (progress.total > 0) return `${progress.place} 기록 파일 ${count(progress.total)}개 중 ${count(progress.done)}개 읽었어요.`
+  return `${progress.place} 컴퓨터 기록도 같이 읽고 있어요.`
+}
+
+/**
+ * How much the AI tools cost this month, read from the agents' own logs when this screen opens.
+ * Nothing runs in the background; the Founder sees numbers, not files.
+ */
 export function AgentMonitorView() {
-  const [services, setServices] = useState<AgentService[]>([])
-  const [snapshots, setSnapshots] = useState<AgentUsageSnapshot[]>([])
-  const [petState, setPetState] = useState<AgentPetState>({ mood: 'happy', speed: 1, message: '로딩 중...' })
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
-  const [fileCounts, setFileCounts] = useState({ skillCount: 0, mdCount: 0 })
+  const [screen, setScreen] = useState<UsageScreen | null>(null)
+  const [failed, setFailed] = useState('')
+  const [notice, setNotice] = useState('')
+  const [reading, setReading] = useState(false)
+  const [progress, setProgress] = useState<Progress | null>(null)
+  const [slow, setSlow] = useState(false)
+  const [othersOpen, setOthersOpen] = useState(false)
+  const alive = useRef(true)
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  async function loadData() {
-    try {
-      // 서비스 목록
-      const servicesResult = await (window as any).electronAPI.listAgentServices()
-      if (servicesResult.ok) {
-        setServices(servicesResult.data || [])
-      }
-
-      // 캐시된 사용량
-      const cachedResult = await (window as any).electronAPI.getCachedAgentUsage()
-      if (cachedResult.ok && cachedResult.data) {
-        setSnapshots(cachedResult.data)
-        updatePetState(cachedResult.data)
-      }
-
-      // 파일 카운트
-      const fileResult = await (window as any).electronAPI.countLocalFiles()
-      if (fileResult) {
-        setFileCounts(fileResult)
-      }
-    } catch (error) {
-      console.error('데이터 로드 실패:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleRefresh() {
-    setRefreshing(true)
-    try {
-      const result = await (window as any).electronAPI.fetchAllAgentUsage()
-      if (result.ok && result.data) {
-        setSnapshots(result.data)
-        updatePetState(result.data)
-      }
-    } catch (error) {
-      console.error('사용량 갱신 실패:', error)
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  function updatePetState(snapshots: AgentUsageSnapshot[]) {
-    if (snapshots.length === 0) {
-      setPetState({ mood: 'happy', speed: 1, message: '등록된 서비스가 없어요!' })
+  async function load() {
+    const api = usageApi()
+    if (!api) {
+      setFailed('이 화면은 DIOS 앱 안에서만 볼 수 있어요.')
       return
     }
-
-    const maxPercent = Math.max(...snapshots.map(s => s.percent))
-    const hasError = snapshots.some(s => s.status === 'error')
-
-    if (maxPercent >= 100) {
-      setPetState({ mood: 'collapsed', speed: 0, message: '한도 초과! 리셋까지 좀 쉬게 해줘...' })
-    } else if (maxPercent >= 90) {
-      setPetState({ mood: 'panicking', speed: 3, message: '⚠️ 거의 다 썼어! 리셋까지 얼마 안 남았어!' })
-    } else if (maxPercent >= 70) {
-      setPetState({ mood: 'sweating', speed: 2, message: '💦 좀 빡빡해... 속도 올릴게!' })
-    } else if (maxPercent >= 40) {
-      setPetState({ mood: 'running', speed: 1.5, message: '🚴 달리는 중! 순조로워~' })
-    } else if (hasError) {
-      setPetState({ mood: 'happy', speed: 1, message: '🔧 일부 서비스 연결 확인 필요' })
-    } else {
-      setPetState({ mood: 'celebrating', speed: 0.8, message: '🎉 여유로워! 오늘도 굿!' })
+    setReading(true)
+    setFailed('')
+    setProgress(null)
+    const slowTimer = setTimeout(() => setSlow(true), 3000)
+    try {
+      const next = await api.usageScreen()
+      if (alive.current) setScreen(next)
+    } catch {
+      if (alive.current) setFailed('사용 기록을 읽지 못했어요. 잠시 뒤에 다시 열어 보세요.')
+    } finally {
+      clearTimeout(slowTimer)
+      if (alive.current) {
+        setSlow(false)
+        setReading(false)
+        setProgress(null)
+      }
     }
   }
 
-  if (loading) {
+  useEffect(() => {
+    alive.current = true
+    const api = usageApi()
+    const stop = api?.onUsageProgress((payload) => setProgress(payload))
+    void load()
+    return () => {
+      alive.current = false
+      stop?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(''), 5000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  async function setCap(card: UsageCard, amount: number) {
+    const api = usageApi()
+    if (!api) return
+    const result = await api.usageSetCap(card.id, amount)
+    setNotice(result.message)
+    if (result.screen) setScreen(result.screen)
+  }
+
+  async function openLink(url: string) {
+    const api = usageApi()
+    if (!api) return
+    const result = await api.usageOpenLink(url)
+    if (!result.ok) setNotice(result.message)
+  }
+
+  if (screen === null && !failed) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-gray-400 text-lg">로딩 중...</div>
-      </div>
+      <section className="skill-board" aria-busy="true" aria-live="polite">
+        <p className="skill-lead">이 컴퓨터의 사용 기록을 읽고 있어요.</p>
+        {progress && <p className="skill-quiet">{progressLine(progress)}</p>}
+        {progress && progress.total > 0 && (
+          <div className="usage-meter" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}>
+            <i style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+          </div>
+        )}
+        {slow && !progress && <p className="skill-quiet">처음 한 번은 기록이 많아서 조금 걸려요. 다음부터는 바로 열려요.</p>}
+        {slow && progress && <p className="skill-quiet">처음 한 번만 이래요. 다음부터는 바뀐 파일만 읽어서 바로 열려요.</p>}
+        <div className="usage-cards" aria-hidden="true">
+          {[0, 1].map((index) => <div key={index} className="skill-card usage-card usage-skeleton" />)}
+        </div>
+      </section>
     )
   }
 
+  if (!screen) {
+    return (
+      <section className="skill-board">
+        <p className="skill-lead">{failed}</p>
+        <div className="skill-toolbar"><button type="button" className="skill-action" onClick={() => void load()}>다시 읽기</button></div>
+      </section>
+    )
+  }
+
+  const offPlaces = screen.places.filter((place) => !place.ok)
+  const hasCaps = screen.cards.some((card) => card.cap > 0)
+
   return (
-    <div className="p-8 animate-fade-in">
-      <div className="mb-8 flex items-center justify-between">
+    <section className="skill-board" aria-label="AI 사용량">
+      <header className="skill-top">
         <div>
-          <h1 className="text-3xl font-bold mb-2">🤖 Agent Monitor</h1>
-          <p className="text-gray-400">구독 AI 서비스 사용량 실시간 추적</p>
+          <p className="skill-lead">{screen.headline}</p>
+          <p className="skill-quiet">{screen.trend ? `${screen.trend} ` : ''}{screen.quiet}</p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-700 rounded-lg text-sm font-medium transition-all"
-          >
-            {refreshing ? '갱신 중...' : '🔄 새로고침'}
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-medium transition-all"
-          >
-            ⚙️ 서비스 관리
-          </button>
+        <div className="skill-toolbar">
+          <button type="button" className="skill-action" onClick={() => void load()} disabled={reading}>{reading ? '읽는 중…' : '지금 다시 읽기'}</button>
         </div>
-      </div>
+      </header>
 
-      {/* Agent Pet Widget */}
-      <AgentPet petState={petState} />
-
-      {/* File Stats */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="glass rounded-xl p-6">
-          <div className="text-sm text-gray-400 mb-2">Skills</div>
-          <div className="text-3xl font-bold">{fileCounts.skillCount}</div>
-        </div>
-        <div className="glass rounded-xl p-6">
-          <div className="text-sm text-gray-400 mb-2">Markdown 파일</div>
-          <div className="text-3xl font-bold">{fileCounts.mdCount}</div>
-        </div>
-      </div>
-
-      {/* Service Usage Cards */}
-      {snapshots.length === 0 ? (
-        <div className="glass rounded-xl p-12 text-center text-gray-500">
-          등록된 서비스가 없습니다. ⚙️ 서비스 관리에서 추가하세요.
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {snapshots.map((snapshot) => (
-            <ServiceUsageCard key={snapshot.serviceId} snapshot={snapshot} />
-          ))}
-        </div>
+      <p className="skill-toast ok" role="status" aria-live="polite" hidden={!notice}>{notice}</p>
+      {reading && progress && <p className="skill-quiet" aria-live="polite">{progressLine(progress)}</p>}
+      {offPlaces.length > 0 && (
+        <p className="skill-toast bad" role="status">
+          {offPlaces.map((place) => place.name).join(', ')} 컴퓨터의 기록은 이번에 못 읽었어요. 꺼져 있으면 그래요. 이 컴퓨터 숫자만 보여요.
+        </p>
       )}
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <ServiceSettingsModal
-          services={services}
-          onClose={() => setShowSettings(false)}
-          onRefresh={loadData}
-        />
+      <div className="usage-cards">
+        {screen.cards.map((card) => (
+          <UsageCardView key={card.id} card={card} onCap={setCap} onLink={openLink} />
+        ))}
+      </div>
+
+      {!hasCaps && screen.cards.some((card) => card.kind === 'subscription' || card.kind === 'api') && (
+        <p className="skill-quiet">카드마다 "이 금액 넘으면 알려 줘"를 정해 두면 왼쪽 메뉴에 숫자가 붙어서 안 열어 봐도 알 수 있어요.</p>
       )}
-    </div>
+
+      {(screen.projects.length > 0 || screen.otherProjects.length > 0) && (
+        <section className="skill-card work-card" aria-label="프로젝트별">
+          <header className="key-group-head">
+            <h3>이번 달 프로젝트별</h3>
+            <small>API 기준 추정 금액</small>
+          </header>
+          <ul className="usage-projects">
+            {screen.projects.map((project) => (
+              <li key={project.name}>
+                <span className="usage-project-name">{project.name}</span>
+                <span className="usage-project-tools">{project.tools.join(' · ')}</span>
+                <b>{dollars(project.month)}</b>
+              </li>
+            ))}
+            {screen.otherProjects.length > 0 && (
+              <li>
+                <button type="button" className="skill-link usage-project-name" aria-expanded={othersOpen} onClick={() => setOthersOpen((open) => !open)}>
+                  그 밖의 폴더 {screen.otherProjects.length}곳 {othersOpen ? '접기' : '보기'}
+                </button>
+                <span className="usage-project-tools" />
+                <b>{dollars(screen.otherProjects.reduce((sum, project) => sum + project.month, 0))}</b>
+              </li>
+            )}
+            {othersOpen && screen.otherProjects.map((project) => (
+              <li key={project.name} className="usage-project-other">
+                <span className="usage-project-name">{project.name}</span>
+                <span className="usage-project-tools">{project.tools.join(' · ')}</span>
+                <b>{dollars(project.month)}</b>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <details className="skill-raw">
+        <summary>원문 보기</summary>
+        <p>읽은 컴퓨터: {screen.places.map((place) => `${place.name}${place.ok ? '' : ' (못 읽음)'}`).join(', ') || '없음'}</p>
+        <p>마지막으로 읽은 때: {whenText(screen.builtAt)}</p>
+        <p>금액은 각 회사의 공개 API 가격표로 계산한 추정치예요. 구독으로 쓰면 실제 청구와 달라요. Cursor는 쓴 횟수만 남겨서 금액이 없어요.</p>
+        {screen.places.filter((place) => place.problem).map((place) => <p key={place.name}>{place.name}: {place.problem}</p>)}
+      </details>
+    </section>
   )
 }
 
-function AgentPet({ petState }: { petState: AgentPetState }) {
-  const moodEmoji = {
-    happy: '😊',
-    running: '🚴',
-    sweating: '😅',
-    panicking: '😱',
-    collapsed: '💀',
-    celebrating: '🎉',
-  }
-
-  return (
-    <div className="glass rounded-xl p-6 mb-6 flex items-center gap-6">
-      <div
-        className="text-6xl"
-        style={{
-          animation: petState.speed > 0 ? `bounce ${1 / petState.speed}s infinite` : 'none',
-        }}
-      >
-        {moodEmoji[petState.mood]}
-      </div>
-      <div className="flex-1">
-        <div className="text-lg font-semibold mb-1">Agent 상태</div>
-        <div className="text-gray-400">{petState.message}</div>
-      </div>
-      <style>{`
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-20px); }
-        }
-      `}</style>
-    </div>
-  )
+interface CardProps {
+  card: UsageCard
+  onCap: (card: UsageCard, amount: number) => void
+  onLink: (url: string) => void
 }
 
-function ServiceUsageCard({ snapshot }: { snapshot: AgentUsageSnapshot }) {
-  const statusColor = {
-    idle: 'bg-gray-600',
-    loading: 'bg-blue-600',
-    success: 'bg-green-600',
-    error: 'bg-red-600',
-  }
+function UsageCardView({ card, onCap, onLink }: CardProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(card.cap ? String(card.cap) : '')
+  const max = Math.max(...card.bars.map((bar) => bar.value), 0.0001)
+  const counting = card.kind === 'count'
+  const show = (value: number) => (counting ? `${count(value)}번` : dollars(value))
+  const canCap = card.kind === 'subscription' || card.kind === 'api'
+  const capShare = card.cap > 0 ? Math.min(100, Math.round((card.month / card.cap) * 100)) : 0
+  const first = card.bars[0]
+  const last = card.bars[card.bars.length - 1]
 
-  const statusLabel = {
-    idle: '대기',
-    loading: '로딩',
-    success: '정상',
-    error: '오류',
-  }
+  useEffect(() => {
+    setDraft(card.cap ? String(card.cap) : '')
+  }, [card.cap])
 
-  const resetDate = snapshot.resetAt > 0 ? new Date(snapshot.resetAt) : null
-  const daysUntilReset = resetDate
-    ? Math.ceil((resetDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    : null
+  function save(amount = Number(draft.replace(/[^\d.]/g, ''))) {
+    onCap(card, Number.isFinite(amount) ? amount : 0)
+    setEditing(false)
+  }
 
   return (
-    <div className="glass rounded-xl p-6 hover:border-white/20 transition-all">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <h3 className="text-xl font-semibold">{snapshot.serviceName}</h3>
-            <span className={`px-2 py-1 rounded text-xs font-medium text-white ${statusColor[snapshot.status]}`}>
-              {statusLabel[snapshot.status]}
-            </span>
-          </div>
-          <p className="text-sm text-gray-400">
-            {SERVICE_TYPES.find(t => t.value === snapshot.type)?.label || snapshot.type}
-          </p>
-        </div>
-        {snapshot.error && (
-          <div className="text-xs text-red-400 max-w-xs text-right">{snapshot.error}</div>
-        )}
-      </div>
+    <article className={`skill-card work-card usage-card ${TONE_CLASS[card.tone]}`} aria-label={`${card.title} 사용량`}>
+      <header className="key-group-head">
+        <h3>{card.title}</h3>
+        <small>{KIND_WORD[card.kind]}</small>
+      </header>
 
-      {/* Usage Bar */}
-      <div className="mb-3">
-        <div className="flex justify-between text-sm mb-1">
-          <span className="text-gray-400">사용량</span>
-          <span className="font-mono">
-            {snapshot.used.toFixed(2)} / {snapshot.limit.toFixed(2)} {snapshot.currency}
-          </span>
-        </div>
-        <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-          <div
-            className={`h-full transition-all ${
-              snapshot.percent >= 100
-                ? 'bg-red-600'
-                : snapshot.percent >= 80
-                ? 'bg-yellow-600'
-                : 'bg-green-600'
-            }`}
-            style={{ width: `${Math.min(snapshot.percent, 100)}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-xs text-gray-500 mt-1">
-          <span>{snapshot.percent.toFixed(1)}% 사용</span>
-          <span>잔여: {snapshot.remaining.toFixed(2)}</span>
-        </div>
-      </div>
-
-      {/* Details */}
-      <div className="grid grid-cols-3 gap-3 text-sm">
-        {snapshot.daily !== undefined && (
-          <div>
-            <div className="text-gray-500">오늘</div>
-            <div className="font-mono">{snapshot.daily.toFixed(2)}</div>
-          </div>
-        )}
-        {snapshot.weekly !== undefined && (
-          <div>
-            <div className="text-gray-500">이번 주</div>
-            <div className="font-mono">{snapshot.weekly.toFixed(2)}</div>
-          </div>
-        )}
-        {snapshot.monthly !== undefined && (
-          <div>
-            <div className="text-gray-500">이번 달</div>
-            <div className="font-mono">{snapshot.monthly.toFixed(2)}</div>
-          </div>
-        )}
-        {daysUntilReset !== null && (
-          <div>
-            <div className="text-gray-500">리셋까지</div>
-            <div className="font-mono">{daysUntilReset}일</div>
-          </div>
-        )}
-      </div>
-
-      {snapshot.fetchedAt > 0 && (
-        <div className="text-xs text-gray-600 mt-3">
-          마지막 갱신: {new Date(snapshot.fetchedAt).toLocaleString('ko-KR')}
+      {card.kind !== 'link' && (
+        <div className="usage-numbers">
+          <div><span>오늘</span><b>{show(card.today)}</b></div>
+          <div><span>이번 주</span><b>{show(card.week)}</b></div>
+          <div className="usage-month"><span>이번 달</span><b>{show(card.month)}</b>{card.cap > 0 && <small> / {dollars(card.cap)}</small>}</div>
         </div>
       )}
-    </div>
-  )
-}
 
-function ServiceSettingsModal({
-  services,
-  onClose,
-  onRefresh,
-}: {
-  services: AgentService[]
-  onClose: () => void
-  onRefresh: () => void
-}) {
-  const [showForm, setShowForm] = useState(false)
-  const [editingService, setEditingService] = useState<AgentService | null>(null)
-
-  async function handleDelete(id: string) {
-    if (!confirm('이 서비스를 삭제하시겠습니까?')) return
-    try {
-      await (window as any).electronAPI.deleteAgentService(id)
-      onRefresh()
-    } catch (error) {
-      console.error('삭제 실패:', error)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-8">
-      <div className="glass-strong rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-        <div className="p-6 border-b border-white/10 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold">⚙️ 서비스 관리</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">
-              ✕
-            </button>
-          </div>
+      {card.cap > 0 && canCap && (
+        <div className="usage-meter" role="img" aria-label={`정해 둔 금액의 ${capShare}%`}>
+          <i style={{ width: `${capShare}%` }} />
         </div>
+      )}
+      {TONE_WORD[card.tone] && <p className="usage-tone">{TONE_WORD[card.tone]}</p>}
 
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex justify-between items-center mb-4">
-            <div className="text-gray-400">등록된 서비스: {services.length}개</div>
-            <button
-              onClick={() => {
-                setEditingService(null)
-                setShowForm(true)
-              }}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-sm font-medium transition-all"
-            >
-              + 새 서비스
-            </button>
+      {card.bars.length > 0 && (
+        <figure className="usage-chart">
+          <div className="usage-bars" role="img" aria-label={`최근 14일, 하루 최고 ${show(max)}`}>
+            {card.bars.map((bar) => (
+              <i key={bar.day} title={`${dayLabel(bar.day)} ${show(bar.value)}`} className={bar.value === 0 ? 'is-empty' : ''} style={{ height: `${Math.max(4, (bar.value / max) * 100)}%` }} />
+            ))}
           </div>
+          <figcaption className="usage-axis"><span>{first ? dayLabel(first.day) : ''}</span><span>최근 14일</span><span>{last ? dayLabel(last.day) : ''}</span></figcaption>
+        </figure>
+      )}
 
-          {services.length === 0 ? (
-            <div className="text-center text-gray-500 py-12">
-              등록된 서비스가 없습니다.
+      {card.lines.map((line) => <p key={line} className="skill-quiet">{line}</p>)}
+      {card.monthTokens > 0 && (
+        <p className="skill-quiet">
+          이번 달 {tokens(card.monthTokens)}
+          {card.byPlace.length > 1 ? ` · ${card.byPlace.map((row) => `${row.place} ${show(row.month)}`).join(' · ')}` : ''}
+        </p>
+      )}
+      {counting && card.byPlace.length > 1 && (
+        <p className="skill-quiet">{card.byPlace.map((row) => `${row.place} ${show(row.month)}`).join(' · ')}</p>
+      )}
+
+      <div className="skill-toolbar">
+        {card.link && <button type="button" className="skill-action" onClick={() => onLink(card.link)}>사이트에서 확인</button>}
+        {canCap && !editing && (
+          <button type="button" className="skill-link" onClick={() => setEditing(true)}>{card.cap > 0 ? '알려 줄 금액 바꾸기' : '이 금액 넘으면 알려 줘'}</button>
+        )}
+        {editing && (
+          <div className="usage-cap-form" role="group" aria-label="알려 줄 금액">
+            <div className="usage-cap-row">
+              <input
+                className="usage-cap"
+                inputMode="decimal"
+                aria-label="알려 줄 금액 (달러)"
+                placeholder="예: 50"
+                autoFocus
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') save()
+                  if (event.key === 'Escape') setEditing(false)
+                }}
+              />
+              <span className="skill-quiet">달러</span>
+              <button type="button" className="skill-action" onClick={() => save()}>저장</button>
+              <button type="button" className="skill-link" onClick={() => setEditing(false)}>취소</button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {services.map((service) => (
-                <div key={service.id} className="glass rounded-lg p-4 flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold mb-1">{service.name}</div>
-                    <div className="text-sm text-gray-400">
-                      {SERVICE_TYPES.find(t => t.value === service.type)?.label || service.type} · 월 한도: $
-                      {service.monthlyCap}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingService(service)
-                        setShowForm(true)
-                      }}
-                      className="px-3 py-1 bg-white/5 hover:bg-white/10 rounded text-sm transition-all"
-                    >
-                      수정
-                    </button>
-                    <button
-                      onClick={() => handleDelete(service.id)}
-                      className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded text-sm transition-all"
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </div>
+            <div className="usage-cap-row">
+              {CAP_PRESETS.map((preset) => (
+                <button key={preset} type="button" className="usage-preset" onClick={() => save(preset)}>{preset}달러</button>
               ))}
+              {card.cap > 0 && <button type="button" className="skill-link" onClick={() => save(0)}>안 알려도 돼요</button>}
             </div>
-          )}
-        </div>
-
-        {showForm && (
-          <ServiceFormModal
-            service={editingService}
-            onClose={() => setShowForm(false)}
-            onSave={() => {
-              setShowForm(false)
-              onRefresh()
-            }}
-          />
+          </div>
         )}
       </div>
-    </div>
-  )
-}
 
-function ServiceFormModal({
-  service,
-  onClose,
-  onSave,
-}: {
-  service: AgentService | null
-  onClose: () => void
-  onSave: () => void
-}) {
-  const [name, setName] = useState(service?.name || '')
-  const [type, setType] = useState(service?.type || 'openai')
-  const [apiKey, setApiKey] = useState(service?.apiKey || '')
-  const [baseUrl, setBaseUrl] = useState(service?.baseUrl || '')
-  const [monthlyCap, setMonthlyCap] = useState(service?.monthlyCap?.toString() || '')
-
-  async function handleSubmit() {
-    try {
-      const input = {
-        name: name.trim(),
-        type,
-        apiKey: apiKey.trim(),
-        baseUrl: baseUrl.trim(),
-        monthlyCap: parseFloat(monthlyCap) || 0,
-      }
-
-      if (service) {
-        await (window as any).electronAPI.updateAgentService(service.id, input)
-      } else {
-        await (window as any).electronAPI.createAgentService(input)
-      }
-      onSave()
-    } catch (error) {
-      console.error('저장 실패:', error)
-      alert('저장에 실패했습니다.')
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-8">
-      <div className="glass-strong rounded-xl max-w-lg w-full p-6">
-        <h3 className="text-xl font-bold mb-4">{service ? '서비스 수정' : '새 서비스'}</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm text-gray-400 mb-2 block">서비스 이름</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-white/20"
-              placeholder="예: OpenAI 메인"
-            />
-          </div>
-          <div>
-            <label className="text-sm text-gray-400 mb-2 block">서비스 종류</label>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full bg-gray-900 border border-white/20 rounded-lg px-4 py-3 text-white text-base focus:outline-none focus:border-cyan-500 appearance-none cursor-pointer"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '20px' }}
-            >
-              {SERVICE_TYPES.map((t) => (
-                <option key={t.value} value={t.value} className="bg-gray-900 text-white py-2">
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-sm text-gray-400 mb-2 block">API Key</label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-white/20"
-              placeholder="sk-..."
-            />
-          </div>
-          <div>
-            <label className="text-sm text-gray-400 mb-2 block">Base URL (선택)</label>
-            <input
-              type="text"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-white/20"
-              placeholder="https://api.openai.com/v1"
-            />
-          </div>
-          <div>
-            <label className="text-sm text-gray-400 mb-2 block">월 한도 ($)</label>
-            <input
-              type="number"
-              value={monthlyCap}
-              onChange={(e) => setMonthlyCap(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-white/20"
-              placeholder="100"
-              min="0"
-              step="0.01"
-            />
-          </div>
-        </div>
-        <div className="flex gap-3 mt-6">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-medium transition-all"
-          >
-            취소
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!name.trim() || !type}
-            className="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-all"
-          >
-            저장
-          </button>
-        </div>
-      </div>
-    </div>
+      {(card.models.length > 0 || card.lastUsed) && (
+        <details className="skill-raw">
+          <summary>원문 보기</summary>
+          {card.models.length > 0 && <p>많이 쓴 모델: {card.models.join(', ')}</p>}
+          {card.lastUsed && <p>마지막으로 쓴 날: {dayLabel(card.lastUsed)}</p>}
+          {card.projected > 0 && <p>월말 예상: 이번 달 하루 평균으로 계산한 값이에요.</p>}
+        </details>
+      )}
+    </article>
   )
 }

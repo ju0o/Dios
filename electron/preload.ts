@@ -107,9 +107,81 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillBoardUntrash: (placeId: string, id: string) => ipcRenderer.invoke('skillBoard:untrash', placeId, id),
   skillBoardCompare: (placeId: string) => ipcRenderer.invoke('skillBoard:compare', placeId),
   skillBoardTranslate: (placeId: string, name: string, text: string) => ipcRenderer.invoke('skillBoard:translate', placeId, name, text),
+  skillBoardRetranslateLine: (placeId: string, name: string, text: string, korean: string, target: 'description' | number) => ipcRenderer.invoke('skillBoard:retranslateLine', placeId, name, text, korean, target),
   skillBoardGuide: (placeId: string, agentId: string, on: boolean) => ipcRenderer.invoke('skillBoard:guide', placeId, agentId, on),
   skillBoardHolders: (placeId: string, name: string) => ipcRenderer.invoke('skillBoard:holders', placeId, name),
   skillBoardReflect: (placeId: string, name: string, toIds: string[]) => ipcRenderer.invoke('skillBoard:reflect', placeId, name, toIds),
+  skillBoardSaveCopy: (placeId: string, names: string[]) => ipcRenderer.invoke('skillBoard:saveCopy', placeId, names),
+  skillBoardReviewPack: (placeId: string, names: string[]) => ipcRenderer.invoke('skillBoard:reviewPack', placeId, names),
+  skillBoardOpenFolder: (folder: string) => ipcRenderer.invoke('skillBoard:openFolder', folder),
+  skillBoardSendTranslation: (placeId: string, name: string, toIds: string[]) => ipcRenderer.invoke('skillBoard:sendTranslation', placeId, name, toIds),
+  founderWorkList: () => ipcRenderer.invoke('founderWork:list'),
+  founderWorkDismiss: (kind: 'aside' | 'founder', fileName: string) => ipcRenderer.invoke('founderWork:dismiss', kind, fileName),
+  founderWorkFinish: (kind: 'aside' | 'founder', fileName: string, note: string) => ipcRenderer.invoke('founderWork:finish', kind, fileName, note),
+  founderWorkUndo: (undoId: string) => ipcRenderer.invoke('founderWork:undo', undoId),
+  founderWorkCopy: (text: string) => ipcRenderer.invoke('founderWork:copy', text),
+  onFounderWork: (callback: (work: unknown) => void) => {
+    const listener = (_event: unknown, work: unknown) => callback(work)
+    ipcRenderer.on('founderWork:changed', listener)
+    return () => ipcRenderer.removeListener('founderWork:changed', listener)
+  },
+  libraryList: () => ipcRenderer.invoke('library:list'),
+  libraryPreview: (address: string) => ipcRenderer.invoke('library:preview', address),
+  libraryAdd: (candidate: unknown, agentIds: string[] | null) => ipcRenderer.invoke('library:add', candidate, agentIds),
+  libraryAddFolder: (agentIds: string[] | null) => ipcRenderer.invoke('library:addFolder', agentIds),
+  libraryAttach: (name: string, agentIds: string[]) => ipcRenderer.invoke('library:attach', name, agentIds),
+  libraryAdopt: (name: string, from: string, agentIds: string[] | null) => ipcRenderer.invoke('library:adopt', name, from, agentIds),
+  libraryRemotes: () => ipcRenderer.invoke('library:remotes'),
+  libraryTake: (placeId: string, name: string) => ipcRenderer.invoke('library:take', placeId, name),
+  libraryGather: () => ipcRenderer.invoke('library:gather'),
+  libraryBlurb: (name: string) => ipcRenderer.invoke('library:blurb', name),
+  onAppOpen: (callback: (view: string) => void) => {
+    const listener = (_event: unknown, view: string) => callback(view)
+    ipcRenderer.on('app:open', listener)
+    return () => ipcRenderer.removeListener('app:open', listener)
+  },
+  libraryOpenFolder: (folder: string) => ipcRenderer.invoke('library:openFolder', folder),
+  startLook: () => ipcRenderer.invoke('start:look'),
+  usageToday: (projectLabel: string) => ipcRenderer.invoke('usage:today', projectLabel),
+  usageScreen: () => ipcRenderer.invoke('usage:screen'),
+  usageSetCap: (cardId: string, amount: number) => ipcRenderer.invoke('usage:setCap', cardId, amount),
+  usageOpenLink: (url: string) => ipcRenderer.invoke('usage:openLink', url),
+  onUsageAlerts: (callback: (payload: { count: number; over: number }) => void) => {
+    const listener = (_event: unknown, payload: { count: number; over: number }) => callback(payload)
+    ipcRenderer.on('usage:alerts', listener)
+    return () => ipcRenderer.removeListener('usage:alerts', listener)
+  },
+  onUsageProgress: (callback: (payload: { done: number; total: number; place: string }) => void) => {
+    const listener = (_event: unknown, payload: { done: number; total: number; place: string }) => callback(payload)
+    ipcRenderer.on('usage:progress', listener)
+    return () => ipcRenderer.removeListener('usage:progress', listener)
+  },
+  skillBoardProjects: (placeId: string) => ipcRenderer.invoke('skillBoard:projects', placeId),
+  skillBoardDrift: () => ipcRenderer.invoke('skillBoard:drift'),
+  skillBoardAlignAll: () => ipcRenderer.invoke('skillBoard:alignAll'),
+  onSkillDrift: (callback: (payload: { count: number }) => void) => {
+    const listener = (_event: unknown, payload: { count: number }) => callback(payload)
+    ipcRenderer.on('skillBoard:drift', listener)
+    return () => ipcRenderer.removeListener('skillBoard:drift', listener)
+  },
+
+  // ═══════════════════════════════════════════
+  // API keys (the secret stays in the main process; the screen sees a masked copy)
+  // ═══════════════════════════════════════════
+  apiKeysList: () => ipcRenderer.invoke('apiKeys:list'),
+  apiKeysAdd: (input: unknown) => ipcRenderer.invoke('apiKeys:add', input),
+  apiKeysUpdate: (id: string, input: unknown) => ipcRenderer.invoke('apiKeys:update', id, input),
+  apiKeysDelete: (id: string) => ipcRenderer.invoke('apiKeys:delete', id),
+  apiKeysCopy: (id: string) => ipcRenderer.invoke('apiKeys:copy', id),
+  apiKeysPeek: (id: string) => ipcRenderer.invoke('apiKeys:peek', id),
+  apiKeysPeekAll: () => ipcRenderer.invoke('apiKeys:peekAll'),
+  apiKeysUndoDelete: (id: string) => ipcRenderer.invoke('apiKeys:undoDelete', id),
+  apiKeysScan: () => ipcRenderer.invoke('apiKeys:scan'),
+  apiKeysAddScanRoot: () => ipcRenderer.invoke('apiKeys:addScanRoot'),
+  apiKeysRemoveScanRoot: (root: string) => ipcRenderer.invoke('apiKeys:removeScanRoot', root),
+  apiKeysRefreshUsage: () => ipcRenderer.invoke('apiKeys:refreshUsage'),
+  apiKeysCheck: () => ipcRenderer.invoke('apiKeys:check'),
+  apiKeysUndoEnv: () => ipcRenderer.invoke('apiKeys:undoEnv'),
 
   // ═══════════════════════════════════════════
   // Operations center

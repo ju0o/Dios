@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "start": "electron .",
-    "test": "vitest run",
+    "test": "node scripts/ensure-node-sqlite.mjs && vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

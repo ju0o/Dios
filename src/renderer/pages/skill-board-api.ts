@@ -1,10 +1,11 @@
 import type { BoardResult, SkillBoard } from '../../core/skill-board/model'
 import type { Place } from '../../core/skill-board/places'
 import type { CompareColumn, CompareRow, PlaceBoard } from '../../core/skill-board/board-service'
+import type { ProjectSkills } from '../../core/skill-board/project-skills'
 import type { SkillVersion } from '../../core/skill-board/library'
 import type { TrashItem } from '../../core/skill-board/keeping'
 
-export type { BoardResult, SkillBoard, CompareColumn, CompareRow, SkillVersion, TrashItem }
+export type { BoardResult, SkillBoard, CompareColumn, CompareRow, SkillVersion, TrashItem, ProjectSkills }
 
 /** Skill board calls exposed by the Electron preload. */
 export interface BoardApi {
@@ -27,6 +28,15 @@ export interface BoardApi {
   skillBoardUntrash: (placeId: string, id: string) => Promise<BoardResult>
   skillBoardCompare: (placeId: string) => Promise<{ columns: CompareColumn[]; rows: CompareRow[] }>
   skillBoardTranslate: (placeId: string, name: string, text: string) => Promise<{ ok: boolean; message: string; text: string }>
+  skillBoardRetranslateLine: (placeId: string, name: string, text: string, korean: string, target: 'description' | number) => Promise<{ ok: boolean; message: string; text: string }>
+  skillBoardSaveCopy: (placeId: string, names: string[]) => Promise<{ ok: boolean; message: string; folder: string }>
+  skillBoardReviewPack: (placeId: string, names: string[]) => Promise<{ ok: boolean; message: string; folder: string }>
+  skillBoardOpenFolder: (folder: string) => Promise<{ ok: boolean; message: string }>
+  skillBoardSendTranslation: (placeId: string, name: string, toIds: string[]) => Promise<{ ok: boolean; message: string }>
+  skillBoardProjects: (placeId: string) => Promise<{ ok: boolean; message: string; projects: ProjectSkills[] }>
+  skillBoardDrift: () => Promise<{ count: number }>
+  skillBoardAlignAll: () => Promise<{ ok: boolean; message: string; count: number; left: number }>
+  onSkillDrift: (callback: (payload: { count: number }) => void) => () => void
 }
 
 /** The preload API, or null when the page is opened outside the desktop app. */
@@ -63,9 +73,11 @@ export function compareMoves(baseId: string, cells: Record<string, string>): { a
   return { align, send, bring }
 }
 
-/** Case-insensitive match on the skill name and its Korean summary. */
-export function matchesSearch(skill: { name: string; summary: string }, query: string): boolean {
+/** Case-insensitive match on the skill name, its English summary, and the saved Korean sentence. */
+export function matchesSearch(skill: { name: string; summary: string; koreanSummary?: string }, query: string): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  return skill.name.toLowerCase().includes(q) || skill.summary.toLowerCase().includes(q)
+  return skill.name.toLowerCase().includes(q)
+    || skill.summary.toLowerCase().includes(q)
+    || (skill.koreanSummary ?? '').toLowerCase().includes(q)
 }

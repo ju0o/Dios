@@ -4,8 +4,8 @@ import path from 'path'
 import { attachAll, listTrash, trashSkill, untrashSkill } from '../src/core/skill-board/keeping'
 import { listHistory, restoreVersion, saveSkillText } from '../src/core/skill-board/library'
 import { linkSkill, loadBoard, textPrint } from '../src/core/skill-board/model'
-import { maskMarkdown, proseHangulRatio, unmaskMarkdown } from '../src/core/skill-board/markdown-text'
-import { readSavedTranslation, writeSavedTranslation } from '../src/core/skill-board/translation-store'
+import { koreanBlurbFromText, maskMarkdown, patchDescription, patchVisibleLine, proseHangulRatio, retryRows, splitSkillText, unmaskMarkdown } from '../src/core/skill-board/markdown-text'
+import { readSavedTranslation, savedKoreanBlurb, writeSavedTranslation } from '../src/core/skill-board/translation-store'
 import { lineToTranslate, splitAroundMasks, translateSkillMarkdown } from '../src/core/skill-board/translate'
 import { compareMoves, matchesSearch, whenText } from '../src/renderer/pages/skill-board-api'
 
@@ -116,7 +116,7 @@ describe('batch attach and helpers', () => {
     const source = 'Send the file to the team.\n'
     const korean = '파일을 팀에 보내요.\n'
     expect(readSavedTranslation(home, 'ssh:main', 'demo-skill', source)).toBeNull()
-    expect(writeSavedTranslation(home, 'ssh:main', 'demo-skill', source, korean)).toBe(true)
+    expect(writeSavedTranslation(home, 'ssh:main', 'demo-skill', source, korean, 'qwen2.5:7b')).toBe(true)
     expect(readSavedTranslation(home, 'ssh:main', 'demo-skill', source)).toBe(korean)
     expect(readSavedTranslation(home, 'ssh:main', 'demo-skill', 'Send a different file.\n')).toBeNull()
     expect(writeSavedTranslation(home, 'ssh:main', '../demo-skill', source, korean)).toBe(false)
@@ -129,6 +129,26 @@ describe('batch attach and helpers', () => {
     expect(lineToTranslate('- 브라우저 일은 Aside에게 보내요.')).toBeNull()
     expect(lineToTranslate('⟦0⟧')).toBeNull()
     expect(splitAroundMasks('Run ⟦0⟧ then open ⟦1⟧.')).toEqual(['Run ', '⟦0⟧', ' then open ', '⟦1⟧', '.'])
+  })
+
+  it('shows the saved Korean sentence in the list and replaces one awkward line', () => {
+    const home = makeHome()
+    const source = '---\nname: demo-skill\ndescription: Send the file to the team.\n---\n\n## Send the file.\nKeep the name.\n'
+    const korean = '---\nname: demo-skill\ndescription: "파일을 팀에 보내요."\n---\n\n## 파일을 보내요.\n이름을 유지해요.\n'
+    expect(writeSavedTranslation(home, 'local', 'demo-skill', source, korean)).toBe(true)
+    expect(savedKoreanBlurb(home, 'local', 'demo-skill', textPrint(source))).toBe('파일을 팀에 보내요.')
+    expect(savedKoreanBlurb(home, 'local', 'demo-skill', textPrint('other'))).toBe('')
+    expect(koreanBlurbFromText('No description here.\n\n본문만 한글로 있어요.\n')).toBe('본문만 한글로 있어요.')
+    expect(matchesSearch({ name: 'demo-skill', summary: 'Send the file.', koreanSummary: '파일을 팀에 보내요.' }, '팀에')).toBe(true)
+
+    const rows = retryRows(source, korean)
+    expect(rows.aligned).toBe(true)
+    expect(rows.rows.map((row) => row.target)).toEqual(['description', 0, 1])
+    const patched = patchVisibleLine(korean, 1, '## 이름을 그대로 둬요.')
+    expect(splitSkillText(patched ?? '').body.split('\n')[1]).toBe('## 이름을 그대로 둬요.')
+    const described = patchDescription(korean, '팀에 파일을 보내요.')
+    expect(splitSkillText(described ?? '').description).toBe('팀에 파일을 보내요.')
+    expect(retryRows(source, '한 줄만\n').aligned).toBe(false)
   })
 
   it('offers align, send, and bring from a compare row', () => {

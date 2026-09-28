@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { guideEnabled } from './library'
+import { projectsFromPortfolio, type RawProjectSkills } from './project-skills'
 
 /** One tool the Founder can attach a skill to. */
 export interface BoardAgent {
@@ -27,6 +28,8 @@ export interface BoardSkill {
   changed: boolean
   addedLines: string[]
   removedLines: string[]
+  /** Saved Korean sentence for the list. Empty until this computer has a translation. */
+  koreanSummary?: string
 }
 
 export interface SkillBoard {
@@ -307,6 +310,17 @@ function readSkillFile(file: string): string {
     return fs.readFileSync(file, 'utf8')
   } catch {
     return ''
+  }
+}
+
+/** Skills each Agent Relay project has attached. Empty when that computer has no portfolio. */
+export function listRawProjects(home: string): { ok: boolean; message: string; projects: RawProjectSkills[] } {
+  const file = portfolioPath(home)
+  if (!fs.existsSync(file)) return { ok: true, message: '', projects: [] }
+  try {
+    return { ok: true, message: '', projects: projectsFromPortfolio(JSON.parse(fs.readFileSync(file, 'utf8'))) }
+  } catch {
+    return { ok: false, message: '프로젝트 스킬 기록을 읽지 못했어요.', projects: [] }
   }
 }
 

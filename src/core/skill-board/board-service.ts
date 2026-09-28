@@ -1,9 +1,16 @@
 import os from 'os'
+import path from 'path'
 import remoteScript from './remote.py?raw'
 import { attachAll, attachMany, listTrash, trashSkill, untrashSkill, type TrashItem } from './keeping'
 import { attachSummary, createSkill, exportSkill, importSkill, listHistory, readSkillText, restoreVersion, sameSkillText, saveSkillText, setGuide, type SkillPack, type SkillVersion, type TextResult } from './library'
-import { acknowledgeSkill, linkSkill, loadBoard, unlinkSkill, type BoardResult, type SkillBoard } from './model'
+import { acknowledgeSkill, linkSkill, listRawProjects, loadBoard, unlinkSkill, type BoardResult, type SkillBoard } from './model'
+import { presentProjects, type ProjectSkills, type RawProjectSkills } from './project-skills'
+import { readLocalUsage, type UsageEntry } from '../agent-monitor/local-logs'
+import { driftCount, differentPlaces } from './drift'
+import { readSavedTranslationRaw, savedKoreanBlurb, writeSavedTranslationRaw } from './translation-store'
+import { textPrint } from './model'
 import { explainFailure, findPlace, listPlaces, runRemote, stagePack, type Place } from './places'
+import { COPY_FOLDER, REVIEW_FOLDER, copyMessage, reviewMessage, writeReviewBundle, writeSkillCopies, type ExportSkill } from './skill-export'
 
 export interface PlaceBoard {
   place: Place
@@ -14,6 +21,14 @@ export interface PlaceBoard {
 }
 
 const EMPTY: SkillBoard = { agents: [], skills: [] }
+const SAFE_NAME = /^[a-z0-9][a-z0-9-]{0,80}$/
+
+export interface DesktopPack {
+  ok: boolean
+  message: string
+  /** Folder on the desktop. Empty when nothing was written. Shown only under 원문 보기. */
+  folder: string
+}
 
 /** Places the board can show from this computer. */
 export function places(): Promise<Place[]> {
@@ -24,10 +39,10 @@ export function places(): Promise<Place[]> {
 export async function boardFor(placeId: string): Promise<PlaceBoard> {
   const place = await findPlace(os.homedir(), placeId)
   if (!place) return { place: { id: placeId, name: placeId, kind: 'local', target: '' }, ok: false, problem: '그 컴퓨터는 목록에 없어요.', board: EMPTY }
-  if (place.kind === 'local') return { place, ok: true, problem: '', board: loadBoard(os.homedir()) }
+  if (place.kind === 'local') return { place, ok: true, problem: '', board: paint(place.id, loadBoard(os.homedir())) }
   try {
     const board = JSON.parse(await runRemote(place, ['board'], remoteScript)) as SkillBoard
-    return { place, ok: true, problem: '', board }
+    return { place, ok: true, problem: '', board: paint(place.id, board) }
   } catch (error) {
     return { place, ok: false, problem: explainFailure(place, error), board: EMPTY }
   }
@@ -77,7 +92,7 @@ export async function sendSkill(fromId: string, toId: string, name: string, over
   try {
     const pack = await exportFrom(from, name)
     const skillText = pack?.files.find((file) => file.path === 'SKILL.md')?.text ?? ''
-    if (!pack || !skillText) return { ok: false, message: '그 스킬 원본이 없어요.', board: from.kind === 'local' ? loadBoard(os.homedir()) : EMPTY }
+    if (!pack || !skillText) return { ok: false, message: '그 스킬 원본이 없어요.', board: from.kind === 'local' ? paint(fromId, loadBoard(os.homedir())) : EMPTY }
     const agentIds = knownAgents ?? (await boardFor(fromId)).board.skills.find((skill) => skill.name === name)?.agents ?? []
     const destText = await readAt(toId, name)
     const same = destText.ok && sameSkillText(destText.text, skillText)
@@ -91,7 +106,8 @@ export async function sendSkill(fromId: string, toId: string, name: string, over
       written = imported.message
     }
     const attached = await attachThere(to, name, agentIds)
-    return { ok: true, message: [written, attached.message].filter(Boolean).join(' '), board: EMPTY }
+    const korean = await carryTranslation(fromId, to, name, skillText)
+    return { ok: true, message: [written, attached.message, korean].filter(Boolean).join(' '), board: EMPTY }
   } catch (error) {
     return { ok: false, message: explainFailure(to, error), board: EMPTY }
   }
@@ -142,9 +158,82 @@ export async function reflectSkill(fromId: string, name: string, toIds: string[]
       : await importRemote(to, pack, true)
     notes.push(imported.ok ? `${to.name}에 반영했어요.` : imported.message)
     any = any || imported.ok
+    if (imported.ok) {
+      const korean = await carryTranslation(fromId, to, name, skillText)
+      if (korean) notes.push(korean)
+    }
   }
-  const board = from.kind === 'local' ? loadBoard(os.homedir()) : (await boardFor(fromId)).board
+  const board = from.kind === 'local' ? paint(fromId, loadBoard(os.homedir())) : (await boardFor(fromId)).board
   return { ok: any || notes.length > 0, message: notes.join(' ') || '반영할 컴퓨터가 없어요.', board }
+}
+
+/**
+ * Send this computer's saved Korean copy of one skill to other computers.
+ * Nothing is translated again. A computer whose English text differs is skipped and named.
+ */
+export async function sendTranslation(fromId: string, name: string, toIds: string[]): Promise<{ ok: boolean; message: string }> {
+  const home = os.homedir()
+  const saved = readSavedTranslationRaw(home, fromId, name)
+  if (!saved) return { ok: false, message: '아직 이 스킬의 번역본이 없어요. 번역본을 먼저 한 번 열어 주세요.' }
+  const notes: string[] = []
+  let sent = 0
+  for (const toId of toIds) {
+    if (toId === fromId) continue
+    const to = await findPlace(home, toId)
+    if (!to) continue
+    try {
+      const result = await putTranslation(to, name, saved.print, saved.text)
+      if (result.ok) {
+        sent += 1
+        notes.push(`${to.name}에 두었어요.`)
+      } else {
+        notes.push(`${to.name}: ${result.message}`)
+      }
+    } catch (error) {
+      notes.push(explainFailure(to, error))
+    }
+  }
+  if (!notes.length) return { ok: false, message: '보낼 컴퓨터가 없어요.' }
+  return { ok: sent > 0, message: notes.join(' ') }
+}
+
+/** A Korean copy that another computer already has for this exact English text. */
+export async function fetchTranslation(placeId: string, name: string, source: string): Promise<string | null> {
+  const place = await findPlace(os.homedir(), placeId)
+  if (!place || place.kind === 'local') return null
+  try {
+    const raw = JSON.parse(await runRemote(place, ['translation', name], remoteScript)) as { ok: boolean; print: string; text: string }
+    if (!raw.ok || raw.print !== textPrint(source) || !raw.text?.trim()) return null
+    return raw.text
+  } catch {
+    return null
+  }
+}
+
+/** After a skill lands on another computer, its Korean copy follows when this computer has one. */
+async function carryTranslation(fromId: string, to: Place, name: string, skillText: string): Promise<string> {
+  const saved = readSavedTranslationRaw(os.homedir(), fromId, name)
+  if (!saved || saved.print !== textPrint(skillText)) return ''
+  try {
+    const result = await putTranslation(to, name, saved.print, saved.text)
+    return result.ok ? '번역본도 같이 두었어요.' : ''
+  } catch {
+    return ''
+  }
+}
+
+async function putTranslation(to: Place, name: string, print: string, text: string): Promise<{ ok: boolean; message: string }> {
+  if (to.kind === 'local') {
+    const home = os.homedir()
+    const current = readSkillText(home, name)
+    if (!current.ok) return { ok: false, message: '그 컴퓨터에 그 스킬이 없어요.' }
+    if (textPrint(current.text) !== print) return { ok: false, message: '그 컴퓨터의 영어 글이 달라서 번역본을 두지 않았어요.' }
+    return writeSavedTranslationRaw(home, 'local', name, print, text)
+      ? { ok: true, message: '번역본을 두었어요.' }
+      : { ok: false, message: '번역본을 저장하지 못했어요.' }
+  }
+  await stagePack(to, JSON.stringify({ name, print, text }))
+  return JSON.parse(await runRemote(to, ['settranslation'], remoteScript)) as { ok: boolean; message: string }
 }
 
 export async function historyAt(placeId: string, name: string): Promise<{ ok: boolean; message: string; versions: SkillVersion[] }> {
@@ -207,6 +296,126 @@ export async function compareAll(baseId: string): Promise<{ columns: CompareColu
   return { columns, rows }
 }
 
+/** Skills Agent Relay attached to each project on this computer. */
+export async function projectsAt(placeId: string): Promise<{ ok: boolean; message: string; projects: ProjectSkills[] }> {
+  const raw = await actList(placeId, ['projects'], (home) => listRawProjects(home), { projects: [] as RawProjectSkills[] })
+  return { ok: raw.ok, message: raw.message, projects: presentProjects(raw.projects) }
+}
+
+/** Daily token use one computer's agents wrote to their own logs. */
+export async function usageAt(placeId: string): Promise<{ ok: boolean; message: string; entries: UsageEntry[] }> {
+  return actList<{ entries: UsageEntry[] }>(placeId, ['usage'], (home) => ({ ok: true, message: '', entries: readLocalUsage(home) }), { entries: [] })
+}
+
+/** How many skills on the base computer differ from another computer. */
+export async function countDrift(baseId: string): Promise<number> {
+  const compared = await compareAll(baseId)
+  return driftCount(compared.rows, baseId)
+}
+
+/**
+ * Overwrite other computers' different copies with this computer's text.
+ * A saved Korean copy follows. Skills the other computer does not have are left alone.
+ */
+export async function alignAll(baseId: string): Promise<{ ok: boolean; message: string; count: number; left: number }> {
+  const compared = await compareAll(baseId)
+  const jobs = compared.rows
+    .map((row) => ({ name: row.name, places: differentPlaces(row.cells, baseId) }))
+    .filter((job) => job.places.length)
+  if (!jobs.length) return { ok: true, message: '이미 다 같아요.', count: 0, left: 0 }
+  let aligned = 0
+  let carried = false
+  const failed: string[] = []
+  for (const job of jobs) {
+    const result = await reflectSkill(baseId, job.name, job.places)
+    if (result.message.includes('번역본도')) carried = true
+    if (result.ok) aligned += 1
+    else failed.push(job.name)
+  }
+  const left = jobs.length - aligned
+  const parts = [`다른 글 ${aligned}개를 이 컴퓨터 기준으로 맞췄어요.`]
+  if (carried) parts.push('저장해 둔 번역본도 같이 갔어요.')
+  if (failed.length) parts.push(`${failed.join(', ')}은 맞추지 못했어요.`)
+  return { ok: aligned > 0, message: parts.join(' '), count: aligned, left }
+}
+
+/**
+ * Copy the skills the Founder picked onto the desktop.
+ * They do not need to know where the original folders live.
+ */
+export async function saveChosenSkills(placeId: string, names: string[], desktop: string): Promise<DesktopPack> {
+  const picked = names.filter((name) => SAFE_NAME.test(name))
+  if (!picked.length) return { ok: false, message: '저장할 스킬을 먼저 골라 주세요.', folder: '' }
+  const place = await findPlace(os.homedir(), placeId)
+  if (!place) return { ok: false, message: '그 컴퓨터는 목록에 없어요.', folder: '' }
+  const packs = []
+  let skipped = 0
+  for (const name of picked) {
+    try {
+      const pack = await exportFrom(place, name)
+      if (!pack) skipped += 1
+      else packs.push(pack)
+    } catch {
+      skipped += 1
+    }
+  }
+  if (!packs.length) return { ok: false, message: '고른 스킬 글을 읽지 못했어요.', folder: '' }
+  const folder = pathJoinDesktop(desktop, COPY_FOLDER)
+  try {
+    const written = writeSkillCopies(folder, packs)
+    if (!written.count) return { ok: false, message: '고른 스킬 글을 읽지 못했어요.', folder: '' }
+    return { ok: true, message: copyMessage(written.count, skipped), folder }
+  } catch {
+    return { ok: false, message: '바탕화면에 저장하지 못했어요. 다시 시도해 주세요.', folder: '' }
+  }
+}
+
+/**
+ * Write one note per linked skill, plus a sheet that tells the Founder what to paste into ChatGPT.
+ * DIOS does not call a paid model for this.
+ */
+export async function saveReviewPack(placeId: string, names: string[], desktop: string): Promise<DesktopPack> {
+  const loaded = await boardFor(placeId)
+  if (!loaded.ok) return { ok: false, message: loaded.problem || '스킬 목록을 읽지 못했어요.', folder: '' }
+  const picked = names.filter((name) => SAFE_NAME.test(name))
+  const pool = picked.length ? loaded.board.skills.filter((skill) => picked.includes(skill.name)) : loaded.board.skills
+  const linked = pool.filter((skill) => skill.agents.length > 0)
+  const unlinked = pool.length - linked.length
+  if (!linked.length) {
+    const message = picked.length
+      ? '고른 스킬은 아직 에이전트에 안 붙었어요. 붙인 다음 다시 눌러 주세요.'
+      : '에이전트에 붙은 스킬이 없어요. 붙인 다음 다시 눌러 주세요.'
+    return { ok: false, message, folder: '' }
+  }
+  const skills: ExportSkill[] = []
+  for (const skill of linked) {
+    const text = await readAt(placeId, skill.name)
+    if (!text.ok || !text.text) continue
+    skills.push({
+      name: skill.name,
+      summary: skill.summary,
+      korean: skill.koreanSummary ?? '',
+      agentNames: skill.agents.map((id) => loaded.board.agents.find((agent) => agent.id === id)?.name || id),
+      text: text.text,
+    })
+  }
+  if (!skills.length) return { ok: false, message: '붙은 스킬 글을 읽지 못했어요.', folder: '' }
+  const folder = pathJoinDesktop(desktop, REVIEW_FOLDER)
+  try {
+    writeReviewBundle(folder, skills)
+    return { ok: true, message: reviewMessage(skills.length, picked.length ? unlinked : 0), folder }
+  } catch {
+    return { ok: false, message: '점검 글을 만들지 못했어요. 다시 시도해 주세요.', folder: '' }
+  }
+}
+
+function pathJoinDesktop(desktop: string, name: string): string {
+  const root = path.resolve(desktop)
+  const folder = path.resolve(root, name)
+  if (folder !== root && !folder.startsWith(`${root}${path.sep}`)) throw new Error('bad desktop')
+  return folder
+}
+
 function createAndAttach(home: string, name: string, summary: string, steps: string[], agentIds: string[]): BoardResult {
   const created = createSkill(home, name, summary, steps)
   if (!created.ok) return withBoard(home, created)
@@ -239,12 +448,29 @@ function withBoard(home: string, result: { ok: boolean; message: string }): Boar
   return { ...result, board: loadBoard(home) }
 }
 
+/** Attach this computer's saved Korean sentence. A remote board keeps the sentence it sent when this computer has none. */
+function paint(placeId: string, board: SkillBoard): SkillBoard {
+  if (!board.skills.length) return board
+  const home = os.homedir()
+  return {
+    ...board,
+    skills: board.skills.map((skill) => ({
+      ...skill,
+      koreanSummary: savedKoreanBlurb(home, placeId, skill.name, skill.print) || skill.koreanSummary || '',
+    })),
+  }
+}
+
+function paintResult(placeId: string, result: BoardResult): BoardResult {
+  return { ...result, board: paint(placeId, result.board) }
+}
+
 async function act(placeId: string, args: string[], local: (home: string) => BoardResult): Promise<BoardResult> {
   const place = await findPlace(os.homedir(), placeId)
   if (!place) return { ok: false, message: '그 컴퓨터는 목록에 없어요.', board: EMPTY }
-  if (place.kind === 'local') return local(os.homedir())
+  if (place.kind === 'local') return paintResult(placeId, local(os.homedir()))
   try {
-    return JSON.parse(await runRemote(place, args, remoteScript)) as BoardResult
+    return paintResult(placeId, JSON.parse(await runRemote(place, args, remoteScript)) as BoardResult)
   } catch (error) {
     return { ok: false, message: explainFailure(place, error), board: EMPTY }
   }
@@ -253,10 +479,10 @@ async function act(placeId: string, args: string[], local: (home: string) => Boa
 async function actPacked(placeId: string, args: string[], local: (home: string) => BoardResult, pack: unknown): Promise<BoardResult> {
   const place = await findPlace(os.homedir(), placeId)
   if (!place) return { ok: false, message: '그 컴퓨터는 목록에 없어요.', board: EMPTY }
-  if (place.kind === 'local') return local(os.homedir())
+  if (place.kind === 'local') return paintResult(placeId, local(os.homedir()))
   try {
     await stagePack(place, JSON.stringify(pack))
-    return JSON.parse(await runRemote(place, args, remoteScript)) as BoardResult
+    return paintResult(placeId, JSON.parse(await runRemote(place, args, remoteScript)) as BoardResult)
   } catch (error) {
     return { ok: false, message: explainFailure(place, error), board: EMPTY }
   }

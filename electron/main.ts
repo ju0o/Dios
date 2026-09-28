@@ -1,15 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import crypto from 'crypto'
+import { runQuiet, setQuietHost } from '../src/core/skill-board/quiet-process'
+import { COPY_FOLDER, REVIEW_FOLDER } from '../src/core/skill-board/skill-export'
 import { initDatabase, getDatabase } from './db/schema'
 
 let mainWindow: BrowserWindow | null = null
 let databasePath = ''
-const execFileAsync = promisify(execFile)
 
 function recordActivity(type: string, title: string, description = '') {
   try {
@@ -81,10 +80,26 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  const openedAt = Date.now()
+  setQuietHost({
+    wasFocused() {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (!win || win.isDestroyed()) return false
+      return win.isFocused() || Date.now() - openedAt < 8000
+    },
+    pullForward() {
+      const win = mainWindow
+      if (!win || win.isDestroyed() || win.isMinimized() || !win.isVisible() || win.isFocused()) return
+      win.show()
+      win.focus()
+    },
+  })
   const dbPath = path.join(app.getPath('userData'), 'dios.db')
   databasePath = dbPath
   initDatabase(dbPath)
   createWindow()
+  startDriftWatch()
+  startWorkWatch()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -92,6 +107,65 @@ app.whenReady().then(() => {
     }
   })
 })
+
+/**
+ * Compare skill text once, a little after start, and tell the window how many differ.
+ * There is no loop: the skill board asks again when it opens.
+ */
+function startDriftWatch(): void {
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const { countDrift } = await import('../src/core/skill-board/board-service')
+        const count = await countDrift('local')
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('skillBoard:drift', { count })
+        }
+        if (count > 0) notifyOnce('drift', '스킬 글이 다른 곳이 있어요.', `${count}곳이 공용 폴더와 달라요. 스킬 보드에서 맞출 수 있어요.`, 'skillBoard')
+      } catch {
+        // A computer that is off stays quiet. The last badge remains.
+      }
+    })()
+  }, 45_000)
+  setTimeout(() => { void publishUsageAlerts() }, 20_000)
+}
+
+/** Badge for 사용량 from the cache of the last read only; the logs themselves are read when the tab opens. */
+async function publishUsageAlerts(): Promise<void> {
+  try {
+    const { readCachedUsage } = await import('../src/core/agent-monitor/local-logs')
+    const { countUsageAlerts } = await import('../src/core/agent-monitor/usage-summary')
+    const counts = countUsageAlerts([{ place: '이 컴퓨터', ok: true, problem: '', entries: readCachedUsage(os.homedir()) }], readUsageCaps())
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('usage:alerts', { count: counts.alerts, over: counts.over })
+    }
+    if (counts.over > 0) notifyOnce('usage-over', '정해 둔 금액을 넘었어요.', '사용량 화면에서 어디가 넘었는지 볼 수 있어요.', 'agentMonitor')
+  } catch {
+    // No cache yet means no badge.
+  }
+}
+
+const notified = new Set<string>()
+
+/** One desktop notice per kind, per launch. Quiet when the computer can't show one. */
+function notifyOnce(kind: string, title: string, body: string, view: string): void {
+  if (notified.has(kind) || !Notification.isSupported()) return
+  notified.add(kind)
+  try {
+    const note = new Notification({ title, body })
+    note.on('click', () => {
+      const win = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed())
+      if (!win) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      win.webContents.send('app:open', view)
+    })
+    note.show()
+  } catch {
+    // A missing notification service must not affect the app.
+  }
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -483,6 +557,221 @@ ipcMain.handle('agentMonitor:countFiles', async () => {
   return countLocalFiles()
 })
 
+// ═══════════════════════════════════════════
+// 스킬 라이브러리: every skill on this computer, plus adding from the web, a folder, or another computer
+// ═══════════════════════════════════════════
+function connectedSkillRoots(): string[] {
+  try {
+    return (getDatabase().prepare("SELECT DISTINCT path FROM project_connections WHERE kind = 'skills'").all() as Array<{ path: string }>).map((row) => row.path)
+  } catch {
+    return []
+  }
+}
+
+ipcMain.handle('library:list', async () => {
+  const { listLibrary } = await import('../src/core/skill-library/library-service')
+  return listLibrary(connectedSkillRoots())
+})
+
+ipcMain.handle('library:preview', async (_event, address: string) => {
+  const { previewSkill } = await import('../src/core/skill-library/library-service')
+  return previewSkill(String(address || ''))
+})
+
+ipcMain.handle('library:add', async (_event, candidate: import('../src/core/skill-library/fetch-skill').SkillCandidate, agentIds: string[] | null) => {
+  const { addCandidate } = await import('../src/core/skill-library/library-service')
+  const result = addCandidate(candidate, Array.isArray(agentIds) ? agentIds.map(String) : null, connectedSkillRoots())
+  if (result.ok) recordActivity('skill', '스킬 받기', candidate.name)
+  return result
+})
+
+ipcMain.handle('library:addFolder', async (_event, agentIds: string[] | null) => {
+  const { addFolder } = await import('../src/core/skill-library/library-service')
+  const picked = await dialog.showOpenDialog({ title: '스킬 폴더 고르기 (SKILL.md가 들어 있는 폴더)', properties: ['openDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return { ok: false, message: '', listing: null }
+  const result = addFolder(picked.filePaths[0], Array.isArray(agentIds) ? agentIds.map(String) : null, connectedSkillRoots())
+  if (result.ok) recordActivity('skill', '스킬 폴더 추가', picked.filePaths[0])
+  return result
+})
+
+ipcMain.handle('library:attach', async (_event, name: string, agentIds: string[]) => {
+  const { attachSkill } = await import('../src/core/skill-library/library-service')
+  return attachSkill(String(name || ''), Array.isArray(agentIds) ? agentIds.map(String) : [], connectedSkillRoots())
+})
+
+ipcMain.handle('library:adopt', async (_event, name: string, from: string, agentIds: string[] | null) => {
+  const { adoptSkill } = await import('../src/core/skill-library/library-service')
+  return adoptSkill(String(name || ''), String(from || ''), Array.isArray(agentIds) ? agentIds.map(String) : null, connectedSkillRoots())
+})
+
+ipcMain.handle('library:remotes', async () => {
+  const { remoteSkills } = await import('../src/core/skill-library/library-service')
+  return remoteSkills()
+})
+
+ipcMain.handle('library:take', async (_event, placeId: string, name: string) => {
+  const { takeFromPlace } = await import('../src/core/skill-library/library-service')
+  const result = await takeFromPlace(String(placeId || ''), String(name || ''), connectedSkillRoots())
+  if (result.ok) recordActivity('skill', '다른 컴퓨터에서 스킬 가져오기', name)
+  return result
+})
+
+ipcMain.handle('library:blurb', async (_event, name: string) => {
+  const { translateCard } = await import('../src/core/skill-library/library-service')
+  return translateCard(String(name || ''), connectedSkillRoots())
+})
+
+ipcMain.handle('library:gather', async () => {
+  const { gatherLoose } = await import('../src/core/skill-library/library-service')
+  const result = gatherLoose(connectedSkillRoots())
+  if (result.ok && result.message && !result.message.startsWith('모을 수 있는')) recordActivity('skill', '스킬 모으기', result.message)
+  return result
+})
+
+ipcMain.handle('start:look', async () => {
+  const { listLibrary, isGatherable } = await import('../src/core/skill-library/library-service')
+  const { defaultReportRoot } = await import('../src/core/founder-work/read-report')
+  const listing = listLibrary(connectedSkillRoots())
+  return {
+    founder: Boolean(defaultReportRoot(process.platform)),
+    agents: listing.readyAgents.map((agent) => agent.name),
+    skillCount: listing.skills.length,
+    looseCount: listing.skills.filter(isGatherable).length,
+    newCount: listing.skills.filter((skill) => skill.isNew).length,
+  }
+})
+
+ipcMain.handle('usage:today', async (_event, projectLabel: string) => {
+  const { readCachedUsage, usageCachePath } = await import('../src/core/agent-monitor/local-logs')
+  const { todaySentence } = await import('../src/core/agent-monitor/usage-summary')
+  const home = os.homedir()
+  if (!fs.existsSync(usageCachePath(home))) return { line: '사용량 화면을 한 번 열면 오늘 한 일이 여기도 나와요.' }
+  const now = new Date()
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return { line: todaySentence(readCachedUsage(home), day, String(projectLabel || '')) }
+})
+
+ipcMain.handle('library:openFolder', async (_event, folder: string) => {
+  const target = String(folder || '')
+  if (!target || !fs.existsSync(target)) return { ok: false, message: '그 폴더가 없어요.' }
+  await shell.openPath(target)
+  return { ok: true, message: '폴더를 열었어요.' }
+})
+
+// ═══════════════════════════════════════════
+// 사용량 screen: read the logs when the tab opens, nothing in the background
+// ═══════════════════════════════════════════
+const USAGE_CAPS_KEY = 'usageCaps'
+/** Provider numbers younger than this are reused instead of asking the site again. */
+const USAGE_KEY_FRESH_MS = 10 * 60 * 1000
+
+/** What the last screen was built from, so a new cap redraws without reading the logs again. */
+let lastUsageInput: { sources: import('../src/core/agent-monitor/usage-summary').UsageSource[]; keys: import('../src/core/agent-monitor/usage-summary').KeyUsage[] } | null = null
+
+function readUsageCaps(): Record<string, number> {
+  try {
+    const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(USAGE_CAPS_KEY) as { value_json?: string } | undefined
+    const parsed = row?.value_json ? JSON.parse(row.value_json) : {}
+    const caps: Record<string, number> = {}
+    if (parsed && typeof parsed === 'object') {
+      for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const amount = Number(value)
+        if (Number.isFinite(amount) && amount > 0) caps[id] = amount
+      }
+    }
+    return caps
+  } catch {
+    return {}
+  }
+}
+
+function writeUsageCaps(caps: Record<string, number>): void {
+  getDatabase().prepare(`
+    INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `).run(USAGE_CAPS_KEY, JSON.stringify(caps), Date.now())
+}
+
+/** Keys whose spending this screen can show or link to, with a provider number when it is fresh. */
+async function usageKeys(): Promise<import('../src/core/agent-monitor/usage-summary').KeyUsage[]> {
+  const { listAgentServices, getCachedUsage, fetchAllUsage } = await import('../src/core/agent-monitor/agent-monitor-store')
+  const services = (listAgentServices().data ?? []).filter((service) => service.enabled && ['openai', 'openrouter', 'claude_code'].includes(service.type))
+  if (!services.length) return []
+  let snapshots = getCachedUsage().data ?? []
+  const needsFetch = services.some((service) => service.type === 'openrouter' && !snapshots.some((snap) => snap.serviceId === service.id && Date.now() - snap.fetchedAt < USAGE_KEY_FRESH_MS))
+  if (needsFetch) {
+    const fetched = await fetchAllUsage()
+    if (fetched.ok && fetched.data) snapshots = fetched.data
+  }
+  return services.map((service) => ({
+    serviceId: service.id,
+    name: service.name,
+    type: service.type,
+    snapshot: snapshots.find((snap) => snap.serviceId === service.id) ?? null,
+  }))
+}
+
+ipcMain.handle('usage:screen', async () => {
+  const { readLocalUsageAsync } = await import('../src/core/agent-monitor/local-logs')
+  const { buildUsageScreen } = await import('../src/core/agent-monitor/usage-summary')
+  const { listPlaces } = await import('../src/core/skill-board/places')
+  const { usageAt } = await import('../src/core/skill-board/board-service')
+  type Source = import('../src/core/agent-monitor/usage-summary').UsageSource
+  const tell = (payload: { done: number; total: number; place: string }) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('usage:progress', payload)
+    }
+  }
+  const local: Source = { place: '이 컴퓨터', ok: true, problem: '', entries: [] }
+  // Other computers are asked at the same time as this one is read, so the wait is the longer of the two.
+  const others = (await listPlaces(os.homedir())).filter((place) => place.kind !== 'local')
+  const remotePromise = Promise.all(others.map(async (place): Promise<Source> => {
+    const name = place.name.replace(/ \(SSH\)$/, '')
+    tell({ done: 0, total: 0, place: name })
+    const result = await usageAt(place.id)
+    return { place: name, ok: result.ok, problem: result.ok ? '' : result.message, entries: result.entries }
+  }))
+  try {
+    local.entries = await readLocalUsageAsync(os.homedir(), new Date(), (done, total) => tell({ done, total, place: '이 컴퓨터' }))
+  } catch {
+    local.ok = false
+    local.problem = '이 컴퓨터의 기록을 읽지 못했어요.'
+  }
+  const remote = await remotePromise
+  const keys = await usageKeys()
+  lastUsageInput = { sources: [local, ...remote], keys }
+  const screen = buildUsageScreen({ sources: lastUsageInput.sources, keys, caps: readUsageCaps() })
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('usage:alerts', { count: screen.alerts, over: screen.over })
+  }
+  return screen
+})
+
+ipcMain.handle('usage:setCap', async (_event, cardId: string, amount: number) => {
+  const { buildUsageScreen } = await import('../src/core/agent-monitor/usage-summary')
+  const caps = readUsageCaps()
+  const id = String(cardId || '')
+  const value = Number(amount)
+  if (!id) return { ok: false, message: '어느 카드인지 몰라요.', screen: null }
+  if (Number.isFinite(value) && value > 0) caps[id] = Math.round(value * 100) / 100
+  else delete caps[id]
+  writeUsageCaps(caps)
+  if (!lastUsageInput) return { ok: true, message: caps[id] ? '이 금액을 넘으면 알려 드릴게요.' : '정해 둔 금액을 지웠어요.', screen: null }
+  const screen = buildUsageScreen({ sources: lastUsageInput.sources, keys: lastUsageInput.keys, caps })
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('usage:alerts', { count: screen.alerts, over: screen.over })
+  }
+  return { ok: true, message: caps[id] ? '이 금액을 넘으면 알려 드릴게요.' : '정해 둔 금액을 지웠어요.', screen }
+})
+
+ipcMain.handle('usage:openLink', async (_event, url: string) => {
+  const allowed = ['https://platform.openai.com/', 'https://console.anthropic.com/', 'https://openrouter.ai/']
+  const target = String(url || '')
+  if (!allowed.some((prefix) => target.startsWith(prefix))) return { ok: false, message: '열 수 없는 주소예요.' }
+  await shell.openExternal(target)
+  return { ok: true, message: '브라우저에서 열었어요.' }
+})
+
 ipcMain.handle('skillBoard:places', async () => {
   const { places } = await import('../src/core/skill-board/board-service')
   return places()
@@ -555,8 +844,35 @@ ipcMain.handle('skillBoard:untrash', async (_event, placeId: string, id: string)
 
 ipcMain.handle('skillBoard:translate', async (_event, placeId: string, name: string, text: string) => {
   const { translateSkillMarkdown } = await import('../src/core/skill-board/translate')
+  const { readSavedTranslation, writeSavedTranslation } = await import('../src/core/skill-board/translation-store')
+  const { fetchTranslation } = await import('../src/core/skill-board/board-service')
   const os = await import('os')
-  return translateSkillMarkdown(String(text ?? ''), {
+  const slot = { home: os.homedir(), placeId: String(placeId || 'local'), name: String(name || '') }
+  const source = String(text ?? '')
+  if (slot.name && slot.placeId !== 'local' && !readSavedTranslation(slot.home, slot.placeId, slot.name, source)) {
+    // That computer may already hold a Korean copy, which saves a minute of translating here.
+    const borrowed = await fetchTranslation(slot.placeId, slot.name, source)
+    if (borrowed) {
+      writeSavedTranslation(slot.home, slot.placeId, slot.name, source, borrowed)
+      return { ok: true, message: '그 컴퓨터에 있던 번역본이에요.', text: borrowed }
+    }
+  }
+  return translateSkillMarkdown(source, slot)
+})
+
+ipcMain.handle('skillBoard:sendTranslation', async (_event, placeId: string, name: string, toIds: unknown) => {
+  const { sendTranslation } = await import('../src/core/skill-board/board-service')
+  return sendTranslation(String(placeId || 'local'), String(name || ''), Array.isArray(toIds) ? toIds.map(String) : [])
+})
+
+ipcMain.handle('skillBoard:retranslateLine', async (_event, placeId: string, name: string, text: string, korean: string, target: unknown) => {
+  const { retranslateSkillLine } = await import('../src/core/skill-board/translate')
+  const os = await import('os')
+  const which = target === 'description' ? 'description' : Number(target)
+  if (which !== 'description' && !Number.isInteger(which)) {
+    return { ok: false, message: '이 줄을 찾지 못했어요.', text: String(korean ?? '') }
+  }
+  return retranslateSkillLine(String(text ?? ''), String(korean ?? ''), which, {
     home: os.homedir(),
     placeId: String(placeId || 'local'),
     name: String(name || ''),
@@ -566,6 +882,134 @@ ipcMain.handle('skillBoard:translate', async (_event, placeId: string, name: str
 ipcMain.handle('skillBoard:compare', async (_event, placeId: string) => {
   const { compareAll } = await import('../src/core/skill-board/board-service')
   return compareAll(String(placeId || 'local'))
+})
+
+type WorkUndo = { action: 'dismiss' | 'finish'; task: import('../src/core/founder-work/parse-gate').OpenTask; from: string; to: string }
+const workUndo = new Map<string, WorkUndo>()
+
+async function workRoot(): Promise<string> {
+  const { defaultReportRoot } = await import('../src/core/founder-work/read-report')
+  return defaultReportRoot(process.platform)
+}
+
+/** Find the open task the window is talking about, re-read from disk so the file name is trusted. */
+async function openTaskNamed(root: string, kind: string, fileName: string) {
+  const { readReport } = await import('../src/core/founder-work/read-report')
+  return readReport(root).open.find((task) => task.kind === kind && task.fileName === fileName) ?? null
+}
+
+function pushWork(work: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('founderWork:changed', work)
+  }
+}
+
+ipcMain.handle('founderWork:list', async () => {
+  const { readReport } = await import('../src/core/founder-work/read-report')
+  return readReport(await workRoot())
+})
+
+ipcMain.handle('founderWork:dismiss', async (_event, kind: string, fileName: string) => {
+  const { readReport } = await import('../src/core/founder-work/read-report')
+  const { dismissOpenFile } = await import('../src/core/founder-work/dismiss')
+  const root = await workRoot()
+  const task = await openTaskNamed(root, String(kind), String(fileName ?? ''))
+  const moved = task ? dismissOpenFile(root, task) : { ok: false, message: '이미 목록에 없어요.', from: '', to: '' }
+  const undoId = moved.ok && task ? crypto.randomBytes(4).toString('hex') : ''
+  if (undoId && task) workUndo.set(undoId, { action: 'dismiss', task, from: moved.from, to: moved.to })
+  const work = readReport(root)
+  pushWork(work)
+  return { ...moved, undoId, work }
+})
+
+ipcMain.handle('founderWork:finish', async (_event, kind: string, fileName: string, note: string) => {
+  const { readReport } = await import('../src/core/founder-work/read-report')
+  const { finishOpenFile } = await import('../src/core/founder-work/dismiss')
+  const root = await workRoot()
+  const task = await openTaskNamed(root, String(kind), String(fileName ?? ''))
+  const moved = task ? finishOpenFile(root, task, String(note ?? '')) : { ok: false, message: '이미 목록에 없어요.', from: '', to: '' }
+  const undoId = moved.ok && task ? crypto.randomBytes(4).toString('hex') : ''
+  if (undoId && task) workUndo.set(undoId, { action: 'finish', task, from: moved.from, to: moved.to })
+  const work = readReport(root)
+  pushWork(work)
+  return { ...moved, undoId, work }
+})
+
+ipcMain.handle('founderWork:undo', async (_event, undoId: string) => {
+  const { readReport } = await import('../src/core/founder-work/read-report')
+  const { restoreOpenFile, unfinishOpenFile } = await import('../src/core/founder-work/dismiss')
+  const root = await workRoot()
+  const saved = workUndo.get(String(undoId ?? ''))
+  let restored = { ok: false, message: '되돌릴 일이 없어요.', from: '', to: '' }
+  if (saved) {
+    restored = saved.action === 'dismiss'
+      ? restoreOpenFile(root, saved.task, saved.from, saved.to)
+      : unfinishOpenFile(root, saved.task, saved.from, saved.to)
+  }
+  if (restored.ok) workUndo.delete(String(undoId ?? ''))
+  const work = readReport(root)
+  pushWork(work)
+  return { ...restored, work }
+})
+
+ipcMain.handle('founderWork:copy', (_event, text: string) => {
+  clipboard.writeText(String(text ?? ''))
+  return { ok: true }
+})
+
+/** Watch the Founder's to-do folders and push the list to the window whenever a file changes. */
+function startWorkWatch(): void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let lastRoot = ''
+  const publish = async () => {
+    try {
+      const { readReport } = await import('../src/core/founder-work/read-report')
+      pushWork(readReport(await workRoot()))
+    } catch {
+      // The folder may be on a disk that is not mounted yet. The next tick tries again.
+    }
+  }
+  const schedule = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => { void publish() }, 900)
+  }
+  const attach = async () => {
+    const root = await workRoot()
+    if (!root || root === lastRoot) return
+    lastRoot = root
+    const now = path.join(root, '00_NOW')
+    try {
+      fs.watch(now, { recursive: true }, schedule)
+    } catch {
+      // No native watcher here; the minute poll below still refreshes the list.
+    }
+  }
+  setTimeout(() => { void attach(); void publish() }, 3_000)
+  setInterval(() => { void attach(); void publish() }, 60_000)
+}
+
+ipcMain.handle('skillBoard:projects', async (_event, placeId: string) => {
+  const { projectsAt } = await import('../src/core/skill-board/board-service')
+  return projectsAt(String(placeId || 'local'))
+})
+
+ipcMain.handle('skillBoard:drift', async () => {
+  const { countDrift } = await import('../src/core/skill-board/board-service')
+  try {
+    const count = await countDrift('local')
+    return { count }
+  } catch {
+    return { count: 0 }
+  }
+})
+
+ipcMain.handle('skillBoard:alignAll', async () => {
+  const { alignAll } = await import('../src/core/skill-board/board-service')
+  const result = await alignAll('local')
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('skillBoard:drift', { count: result.left })
+  }
+  return result
 })
 
 ipcMain.handle('skillBoard:guide', async (_event, placeId: string, agentId: string, on: boolean) => {
@@ -581,6 +1025,288 @@ ipcMain.handle('skillBoard:holders', async (_event, placeId: string, name: strin
 ipcMain.handle('skillBoard:reflect', async (_event, placeId: string, name: string, toIds: string[]) => {
   const { reflectSkill } = await import('../src/core/skill-board/board-service')
   return reflectSkill(String(placeId || 'local'), String(name), Array.isArray(toIds) ? toIds.map(String) : [])
+})
+
+ipcMain.handle('skillBoard:saveCopy', async (_event, placeId: string, names: unknown) => {
+  const { saveChosenSkills } = await import('../src/core/skill-board/board-service')
+  return saveChosenSkills(String(placeId || 'local'), Array.isArray(names) ? names.map(String) : [], app.getPath('desktop'))
+})
+
+ipcMain.handle('skillBoard:reviewPack', async (_event, placeId: string, names: unknown) => {
+  const { saveReviewPack } = await import('../src/core/skill-board/board-service')
+  return saveReviewPack(String(placeId || 'local'), Array.isArray(names) ? names.map(String) : [], app.getPath('desktop'))
+})
+
+// ═══════════════════════════════════════════
+// API keys (locked with the OS key store, never sent to the screen)
+// ═══════════════════════════════════════════
+const secretLock = {
+  available: () => {
+    try {
+      return safeStorage.isEncryptionAvailable()
+    } catch {
+      return false
+    }
+  },
+  lock: (plain: string) => safeStorage.encryptString(plain).toString('base64'),
+  unlock: (locked: string) => safeStorage.decryptString(Buffer.from(locked, 'base64')),
+}
+
+/** Deleted keys wait here so 되돌리기 can put them back. Gone when the app closes. */
+const deletedKeys = new Map<string, import('../src/core/api-keys/api-key-store').DeletedKey>()
+
+/** The last .env write, so 되돌리기 can put that one file back. */
+let envUndo: { keyId: string; file: string; backup: string; oldKey: string; project: string; platform: string; label: string; note: string } | null = null
+
+const SCAN_ROOTS_KEY = 'apiScanRoots'
+
+function readScanRoots(): string[] {
+  try {
+    const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(SCAN_ROOTS_KEY) as { value_json?: string } | undefined
+    const parsed = row?.value_json ? JSON.parse(row.value_json) : []
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+function writeScanRoots(roots: string[]): void {
+  getDatabase().prepare(`
+    INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `).run(SCAN_ROOTS_KEY, JSON.stringify(roots), Date.now())
+}
+
+/** Folders the scan looks at: the ones the Founder added, project folders, and common project homes. */
+async function allScanRoots(): Promise<string[]> {
+  const { defaultScanRoots } = await import('../src/core/api-keys/env-scan')
+  const db = getDatabase()
+  const connected = (db.prepare("SELECT path FROM project_connections WHERE kind = 'folder'").all() as Array<{ path: string }>).map((row) => row.path)
+  const roots = [...readScanRoots(), ...connected, ...defaultScanRoots(os.homedir())]
+  return [...new Set(roots.map((root) => path.resolve(root)))].filter((root) => fs.existsSync(root))
+}
+
+/**
+ * Keep one usage service per key whose platform DIOS can look up.
+ * The service holds the key too, because the usage lookup needs it as it is.
+ */
+async function syncUsageService(keyId: string): Promise<void> {
+  const { keyForService, setKeyService } = await import('../src/core/api-keys/api-key-store')
+  const { USAGE_TYPES } = await import('../src/core/api-keys/api-key-text')
+  const { createAgentService, updateAgentService } = await import('../src/core/agent-monitor/agent-monitor-store')
+  const db = getDatabase()
+  const found = keyForService(db, secretLock, keyId)
+  if (!found || !found.key) return
+  const type = USAGE_TYPES[found.platform]
+  if (!type) return
+  const name = `${found.project} · ${found.platform}${found.label ? ` · ${found.label}` : ''}`
+  if (found.serviceId) {
+    const updated = updateAgentService(found.serviceId, { name, type: type as never, apiKey: found.key })
+    if (updated.ok) return
+  }
+  const created = createAgentService({ name, type: type as never, apiKey: found.key, monthlyCap: 0 })
+  if (created.ok && created.data) setKeyService(db, keyId, created.data.id)
+}
+
+async function keyListing() {
+  const { listApiKeys, knownProjects } = await import('../src/core/api-keys/api-key-store')
+  const { getCachedUsage } = await import('../src/core/agent-monitor/agent-monitor-store')
+  const db = getDatabase()
+  const projectRows = db.prepare('SELECT name FROM projects ORDER BY name').all() as Array<{ name: string }>
+  const usage = getCachedUsage()
+  return {
+    cards: listApiKeys(db),
+    projects: knownProjects(db, projectRows.map((row) => row.name)),
+    locked: secretLock.available(),
+    usage: usage.ok ? usage.data ?? [] : [],
+    scanRoots: await allScanRoots(),
+  }
+}
+
+ipcMain.handle('apiKeys:list', async () => keyListing())
+
+ipcMain.handle('apiKeys:add', async (_event, input: unknown) => {
+  const { addApiKey } = await import('../src/core/api-keys/api-key-store')
+  const result = addApiKey(getDatabase(), secretLock, (input ?? {}) as Record<string, string>)
+  if (result.ok) {
+    recordActivity('apiKey', 'API 키 등록', '')
+    await syncUsageService(result.id)
+    result.cards = (await keyListing()).cards
+  }
+  return result
+})
+
+ipcMain.handle('apiKeys:update', async (_event, id: string, input: unknown) => {
+  const { updateApiKey, keyForService, listApiKeys, revealApiKey } = await import('../src/core/api-keys/api-key-store')
+  const { writeEnvKey } = await import('../src/core/api-keys/env-write')
+  const db = getDatabase()
+  const keyId = String(id || '')
+  const priorCard = listApiKeys(db).find((card) => card.id === keyId)
+  const prior = keyForService(db, secretLock, keyId)
+  const result: Awaited<ReturnType<typeof updateApiKey>> & { undoEnv?: boolean } = updateApiKey(db, secretLock, keyId, (input ?? {}) as Record<string, string>)
+  if (result.ok) {
+    recordActivity('apiKey', 'API 키 수정', '')
+    await syncUsageService(keyId)
+    if (result.keyChanged && priorCard?.source && prior?.key && prior.label) {
+      const after = revealApiKey(db, secretLock, keyId)
+      if (after.ok && after.key !== prior.key) {
+        const written = writeEnvKey(priorCard.source, prior.label, prior.key, after.key)
+        if (written.changed) {
+          envUndo = { keyId, file: priorCard.source, backup: written.backup, oldKey: prior.key, project: prior.project, platform: prior.platform, label: prior.label, note: priorCard.note }
+          result.message = `${result.message} ${written.message}`
+          result.undoEnv = true
+        } else if (!written.ok) {
+          result.message = `${result.message} ${written.message}`
+        }
+      }
+    }
+    result.cards = (await keyListing()).cards
+  }
+  return result
+})
+
+ipcMain.handle('apiKeys:delete', async (_event, id: string) => {
+  const { deleteApiKey } = await import('../src/core/api-keys/api-key-store')
+  const { deleteAgentService } = await import('../src/core/agent-monitor/agent-monitor-store')
+  const result = deleteApiKey(getDatabase(), String(id || ''))
+  if (result.ok && result.deleted) {
+    deletedKeys.set(result.deleted.id, result.deleted)
+    if (result.deleted.serviceId) deleteAgentService(result.deleted.serviceId)
+    recordActivity('apiKey', 'API 키 삭제', '')
+  }
+  return { ok: result.ok, message: result.message, cards: result.cards, undoId: result.deleted?.id ?? '' }
+})
+
+ipcMain.handle('apiKeys:undoEnv', async () => {
+  const { updateApiKey } = await import('../src/core/api-keys/api-key-store')
+  const { restoreEnvBackup } = await import('../src/core/api-keys/env-write')
+  const saved = envUndo
+  if (!saved) return { ok: false, message: '되돌릴 파일 수정이 없어요.', cards: (await keyListing()).cards }
+  if (!restoreEnvBackup(saved.file, saved.backup)) {
+    return { ok: false, message: '설정 파일을 되돌리지 못했어요.', cards: (await keyListing()).cards }
+  }
+  const result = updateApiKey(getDatabase(), secretLock, saved.keyId, {
+    project: saved.project, platform: saved.platform, label: saved.label, key: saved.oldKey, note: saved.note,
+  })
+  if (result.ok) {
+    envUndo = null
+    await syncUsageService(saved.keyId)
+    result.message = '프로젝트 설정과 키를 되돌렸어요.'
+    result.cards = (await keyListing()).cards
+  }
+  return result
+})
+
+ipcMain.handle('apiKeys:check', async () => {
+  const { listApiKeys, revealApiKey, setKeyHealth } = await import('../src/core/api-keys/api-key-store')
+  const { canProbe, probeKey, checkSummary } = await import('../src/core/api-keys/key-health')
+  const db = getDatabase()
+  const cards = listApiKeys(db)
+  const counts = { ok: 0, dead: 0, limited: 0, unknown: 0 }
+  const targets = cards.filter((card) => canProbe(card.platform))
+  let cursor = 0
+  async function worker() {
+    while (cursor < targets.length) {
+      const card = targets[cursor]
+      cursor += 1
+      const opened = revealApiKey(db, secretLock, card.id)
+      const state = opened.ok ? await probeKey(card.platform, opened.key) : 'unknown'
+      setKeyHealth(db, card.id, state, Date.now())
+      counts[state] += 1
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()))
+  if (counts.dead || counts.ok) recordActivity('apiKey', 'API 키 상태 확인', `${counts.ok}개 정상, ${counts.dead}개 안 됨`)
+  return { ok: true, message: checkSummary(counts), listing: await keyListing() }
+})
+
+ipcMain.handle('apiKeys:undoDelete', async (_event, id: string) => {
+  const { restoreApiKey } = await import('../src/core/api-keys/api-key-store')
+  const deleted = deletedKeys.get(String(id || ''))
+  if (!deleted) return { ok: false, message: '되돌릴 키가 없어요.', cards: (await keyListing()).cards }
+  const result = restoreApiKey(getDatabase(), { ...deleted, serviceId: '' })
+  if (result.ok) {
+    deletedKeys.delete(deleted.id)
+    await syncUsageService(deleted.id)
+    result.cards = (await keyListing()).cards
+  }
+  return result
+})
+
+ipcMain.handle('apiKeys:peekAll', async () => {
+  const { revealAllApiKeys } = await import('../src/core/api-keys/api-key-store')
+  return revealAllApiKeys(getDatabase(), secretLock)
+})
+
+ipcMain.handle('apiKeys:scan', async () => {
+  const { scanEnvRoots, scanMessage } = await import('../src/core/api-keys/env-scan')
+  const { registerFindings } = await import('../src/core/api-keys/api-key-store')
+  const roots = await allScanRoots()
+  const scanned = scanEnvRoots(roots)
+  const registered = registerFindings(getDatabase(), secretLock, scanned.findings)
+  for (const id of registered.added) await syncUsageService(id)
+  if (registered.added.length) recordActivity('apiKey', '프로젝트 폴더에서 API 키 찾아 등록', `${registered.added.length}개`)
+  return {
+    ok: true,
+    message: scanMessage(scanned.folders, scanned.files, registered.added.length, registered.kept, scanned.findings.length),
+    added: registered.added.length,
+    listing: await keyListing(),
+  }
+})
+
+ipcMain.handle('apiKeys:addScanRoot', async () => {
+  const picked = await dialog.showOpenDialog({ title: '훑을 프로젝트 폴더 고르기', properties: ['openDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return { ok: false, message: '', listing: await keyListing() }
+  const roots = readScanRoots()
+  const next = path.resolve(picked.filePaths[0])
+  if (!roots.includes(next)) writeScanRoots([...roots, next])
+  return { ok: true, message: '폴더를 추가했어요. 훑기를 누르면 그 안의 키도 찾아요.', listing: await keyListing() }
+})
+
+ipcMain.handle('apiKeys:removeScanRoot', async (_event, root: string) => {
+  writeScanRoots(readScanRoots().filter((item) => item !== String(root)))
+  return { ok: true, message: '그 폴더는 더 훑지 않아요.', listing: await keyListing() }
+})
+
+ipcMain.handle('apiKeys:refreshUsage', async () => {
+  const { fetchAllUsage } = await import('../src/core/agent-monitor/agent-monitor-store')
+  const { listApiKeys, setKeyHealth } = await import('../src/core/api-keys/api-key-store')
+  const { healthFromUsageError } = await import('../src/core/api-keys/key-health')
+  const result = await fetchAllUsage()
+  if (result.ok && result.data) {
+    const db = getDatabase()
+    const cards = listApiKeys(db)
+    for (const snapshot of result.data) {
+      const state = healthFromUsageError(snapshot.error, snapshot.type)
+      if (!state) continue
+      const card = cards.find((item) => item.serviceId === snapshot.serviceId)
+      if (card) setKeyHealth(db, card.id, state, Date.now())
+    }
+  }
+  return { ok: result.ok, message: result.ok ? '사용량을 새로 받았어요.' : '사용량을 못 받았어요. 인터넷을 확인해 주세요.', listing: await keyListing() }
+})
+
+ipcMain.handle('apiKeys:copy', async (_event, id: string) => {
+  const { revealApiKey } = await import('../src/core/api-keys/api-key-store')
+  const result = revealApiKey(getDatabase(), secretLock, String(id || ''))
+  if (!result.ok) return { ok: false, message: result.message }
+  clipboard.writeText(result.key)
+  return { ok: true, message: '키를 복사했어요. 붙여 넣을 곳에 바로 넣으면 돼요.' }
+})
+
+ipcMain.handle('apiKeys:peek', async (_event, id: string) => {
+  const { revealApiKey } = await import('../src/core/api-keys/api-key-store')
+  const result = revealApiKey(getDatabase(), secretLock, String(id || ''))
+  return result.ok ? { ok: true, message: '', key: result.key } : { ok: false, message: result.message, key: '' }
+})
+
+ipcMain.handle('skillBoard:openFolder', async (_event, folder: string) => {
+  const desktop = path.resolve(app.getPath('desktop'))
+  const resolved = path.resolve(String(folder || ''))
+  const allowed = [path.resolve(desktop, COPY_FOLDER), path.resolve(desktop, REVIEW_FOLDER)]
+  if (!allowed.includes(resolved) || !fs.existsSync(resolved)) return { ok: false, message: '그 폴더를 열지 못했어요.' }
+  const error = await shell.openPath(resolved)
+  return error ? { ok: false, message: '그 폴더를 열지 못했어요.' } : { ok: true, message: '폴더를 열었어요.' }
 })
 
 // ═══════════════════════════════════════════
@@ -720,10 +1446,12 @@ ipcMain.handle('operations:systemStatus', async () => {
 
 async function runWorkspaceCommand(command: string, args: string[], cwd: string, timeout = 120000) {
   try {
-    const result = await execFileAsync(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 1024 * 1024 * 4 })
-    return { success: true, output: `${result.stdout || ''}${result.stderr || ''}`.trim() }
+    const result = await runQuiet(command, args, '', { cwd, timeoutMs: timeout })
+    const output = `${result.stdout || ''}${result.stderr || ''}`.trim()
+    if (result.code === 0) return { success: true, output }
+    return { success: false, output, code: result.code }
   } catch (error: any) {
-    return { success: false, output: `${error?.stdout || ''}${error?.stderr || error?.message || error}`.trim(), code: error?.code }
+    return { success: false, output: `${error?.message || error}`.trim() }
   }
 }
 

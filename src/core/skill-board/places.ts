@@ -1,6 +1,6 @@
-import { execFile, spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import { runQuiet } from './quiet-process'
 
 /** One computer or environment whose skills the board can show. */
 export interface Place {
@@ -123,19 +123,31 @@ function readSshHosts(file: string): string[] {
   }
 }
 
-function listWslDistros(): Promise<string[]> {
-  return new Promise((resolve) => {
-    execFile('wsl.exe', ['-l', '-q'], { encoding: 'buffer', timeout: 5000, windowsHide: true }, (error, stdout) => {
-      if (error) return resolve([])
-      const text = decodeWsl(stdout)
-      resolve(text.split(/\r?\n/).map((line) => line.replace(/\0/g, '').trim()).filter((line) => line && !SKIP_WSL.test(line)))
-    })
-  })
+/**
+ * Distro names from `reg query`, without starting wsl.exe.
+ * Starting wsl.exe on launch is what opened a window and took the screen.
+ */
+export function distrosFromReg(text: string): string[] {
+  const names: string[] = []
+  for (const rawLine of text.split(/\r?\n/)) {
+    const match = rawLine.match(/DistributionName\s+REG_\w+\s+(.+)$/i)
+    if (!match) continue
+    const name = match[1].replace(/\0/g, '').trim()
+    if (!name || SKIP_WSL.test(name) || names.includes(name)) continue
+    names.push(name)
+  }
+  return names
 }
 
-function decodeWsl(buffer: Buffer): string {
-  const hasNulls = buffer.length > 1 && buffer[1] === 0
-  return hasNulls ? buffer.toString('utf16le') : buffer.toString('utf8')
+async function listWslDistros(): Promise<string[]> {
+  if (process.platform !== 'win32') return []
+  const reg = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe')
+  try {
+    const result = await runQuiet(reg, ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss', '/s'], '', { timeoutMs: 8000 })
+    return distrosFromReg(result.stdout)
+  } catch {
+    return []
+  }
 }
 
 function looksLikeMissingPython(error: unknown): boolean {
@@ -143,30 +155,17 @@ function looksLikeMissingPython(error: unknown): boolean {
   return /python3|not recognized|not found|Microsoft Store|찾을 수 없/i.test(text)
 }
 
-function runOnce(command: string, args: string[], input: string, place: Place): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true })
-    let out = ''
-    let err = ''
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error(`${place.name}: timed out`))
-    }, RUN_TIMEOUT_MS)
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => { out += chunk })
-    child.stderr.on('data', (chunk: string) => { err += chunk })
-    child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(new Error(`${place.name}: ${error.message}`))
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      const jsonStart = out.indexOf('{')
-      if (code === 0 && jsonStart >= 0) return resolve(out.slice(jsonStart))
-      reject(new Error(`${place.name}: exit ${code ?? '?'} ${err.trim() || out.trim()}`))
-    })
-    child.stdin.on('error', () => { /* the close handler reports the real reason */ })
-    child.stdin.end(input)
-  })
+async function runOnce(command: string, args: string[], input: string, place: Place): Promise<string> {
+  try {
+    const result = await runQuiet(command, args, input, { timeoutMs: RUN_TIMEOUT_MS })
+    const jsonStart = result.stdout.indexOf('{')
+    if (result.code === 0 && jsonStart >= 0) return result.stdout.slice(jsonStart)
+    const detail = result.stderr.trim() || result.stdout.trim()
+    throw new Error(`${place.name}: exit ${result.code ?? '?'} ${detail}`)
+  } catch (error) {
+    const text = String((error as { message?: string })?.message ?? error)
+    if (text === 'timed out') throw new Error(`${place.name}: timed out`)
+    if (text.startsWith(`${place.name}:`)) throw error
+    throw new Error(`${place.name}: ${text}`)
+  }
 }

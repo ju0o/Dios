@@ -3,7 +3,8 @@
 
 Mirrors src/core/skill-board/model.ts for one home directory and prints one JSON
 document. Commands: board | link | unlink | ack | create | read | save | export |
-import | guide | attach <skill> <ids> | history | restore | trash | trashlist | untrash.
+import | guide | attach <skill> <ids> | history | restore | trash | trashlist | untrash |
+translation <skill> | settranslation | projects | usage.
 Only the Python standard library is used so any host with python3 (or Windows py) works.
 """
 from __future__ import annotations
@@ -204,6 +205,97 @@ def line_diff(before: str, after: str) -> tuple[list[str], list[str]]:
     return added, removed
 
 
+def translation_path(name: str) -> Path:
+    """Same file the desktop app writes for skills on this computer (placeId "local")."""
+    return HOME / ".local" / "share" / "dios" / "skill-translations" / f"local--{name}.json"
+
+
+def read_translation(name: str) -> dict:
+    """Saved Korean copy of one skill, with the fingerprint of the English it came from."""
+    if not SAFE_NAME.match(name):
+        return {"ok": False, "message": "스킬 이름이 이상해요.", "print": "", "text": ""}
+    try:
+        saved = json.loads(translation_path(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ok": False, "message": "이 컴퓨터에는 번역본이 없어요.", "print": "", "text": ""}
+    text = str(saved.get("text") or "")
+    if not text.strip():
+        return {"ok": False, "message": "이 컴퓨터에는 번역본이 없어요.", "print": "", "text": ""}
+    return {"ok": True, "message": "", "print": str(saved.get("print") or ""), "text": text}
+
+
+def korean_blurb(text: str) -> str:
+    """First Korean sentence for the list. Mirrors markdown-text.ts koreanBlurbFromText closely enough."""
+    description, body = split_front_matter(text)
+    first = korean_sentence(description)
+    if first:
+        return first
+    for line in korean_lines(body, 90):
+        return line
+    return ""
+
+
+def saved_korean_blurb(name: str, print_value: str) -> str:
+    saved = read_translation(name)
+    if not saved.get("ok") or not print_value or saved.get("print") != print_value:
+        return ""
+    return korean_blurb(str(saved.get("text") or ""))
+
+
+def set_translation() -> dict:
+    """Write a Korean copy sent from another computer. The English skill file is not touched."""
+    data = take_pack()
+    name = str(data.get("name") or "")
+    print_value = str(data.get("print") or "")
+    text = str(data.get("text") or "")
+    if not SAFE_NAME.match(name):
+        return {"ok": False, "message": "스킬 이름이 이상해요."}
+    if not print_value or not text.strip():
+        return {"ok": False, "message": "보낼 번역본이 비어 있어요."}
+    current = read_text(canonical_dir() / name / "SKILL.md")
+    if not current:
+        return {"ok": False, "message": "그 컴퓨터에 그 스킬이 없어요."}
+    if text_print(current) != print_value:
+        return {"ok": False, "message": "그 컴퓨터의 영어 글이 달라서 번역본을 두지 않았어요."}
+    dest = translation_path(name)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not text.endswith("\n"):
+        text += "\n"
+    tmp = dest.with_suffix(".json.dios-tmp")
+    tmp.write_text(json.dumps({"print": print_value, "text": text}, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, dest)
+    return {"ok": True, "message": "번역본을 두었어요."}
+
+
+def read_project_skills() -> dict:
+    """Per-project skill names, before the app turns lane keys into Korean."""
+    path = portfolio_path()
+    if not path.exists():
+        return {"ok": True, "message": "", "projects": []}
+    try:
+        portfolio = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ok": False, "message": "프로젝트 스킬 기록을 읽지 못했어요.", "projects": []}
+    projects = []
+    for project in portfolio.get("projects") or []:
+        if not isinstance(project, dict) or not SAFE_NAME.match(str(project.get("id") or "")):
+            continue
+        skills = project.get("skills")
+        if not isinstance(skills, dict):
+            continue
+        lanes = {}
+        for lane in ("pm", "worker", "qa"):
+            items = skills.get(lane)
+            if not isinstance(items, list):
+                continue
+            names = sorted({item for item in items if isinstance(item, str) and SAFE_NAME.match(item)})
+            if names:
+                lanes[lane] = names
+        if lanes:
+            projects.append({"id": project["id"], "lanes": lanes})
+    return {"ok": True, "message": "", "projects": projects}
+
+
 def read_relay_skills() -> tuple[bool, list[str]]:
     path = portfolio_path()
     if not path.exists():
@@ -252,16 +344,18 @@ def load_board() -> dict:
         if raw and not seen:
             watch["skills"][name] = {"hash": current, "body": raw[:20000]}
             dirty = True
+        print_value = text_print(raw)
         skills.append({
             "name": name,
             "summary": summary,
             "steps": steps,
             "fullSteps": full_steps,
-            "print": text_print(raw),
+            "print": print_value,
             "agents": [aid for aid, items in agent_skills.items() if name in items],
             "changed": changed,
             "addedLines": added,
             "removedLines": removed,
+            "koreanSummary": saved_korean_blurb(name, print_value),
         })
     if dirty:
         write_watch(watch)
@@ -270,6 +364,271 @@ def load_board() -> dict:
 
 def result(ok: bool, message: str) -> dict:
     return {"ok": ok, "message": message, "board": load_board()}
+
+
+# ---- token usage from Claude Code / Codex logs (mirrors agent-monitor/local-logs.ts) ----
+
+USAGE_LOOKBACK_DAYS = 62
+USAGE_MAX_BYTES = 80 * 1024 * 1024
+
+
+def usage_cache_path() -> Path:
+    return HOME / ".local" / "share" / "dios" / "usage-cache-remote.json"
+
+
+def _day_of(stamp: str) -> str:
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.strftime("%Y-%m-%d")
+    except (ValueError, AttributeError):
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _project_of(cwd: str) -> str:
+    parts = [p for p in str(cwd or "").replace("\\", "/").split("/") if p]
+    for i, part in enumerate(parts):
+        if re.search(r"worktrees?$", part, re.I) and i + 1 < len(parts):
+            return parts[i + 1]
+    return parts[-1] if parts else ""
+
+
+_GROUP_FOLDERS = {"projects", "core", "team", "personal", "work", "src", "repos", "code", "dev", "desktop", "documents"}
+_ANCHORS = {"projects", "src", "repos", "code", "dev", "users", "home"}
+
+
+def _project_from_file(file: str) -> str:
+    """Mirrors projectFromFile in agent-monitor/local-logs.ts."""
+    parts = [p for p in str(file or "").replace("\\", "/").split("/") if p]
+    if len(parts) < 2:
+        return ""
+    for i, part in enumerate(parts):
+        if re.search(r"worktrees?$", part, re.I) and i + 1 < len(parts):
+            return parts[i + 1]
+    lowered = [p.lower() for p in parts]
+    anchor = lowered.index("projects") if "projects" in lowered else -1
+    if anchor < 0:
+        user = next((i for i, p in enumerate(lowered) if p in ("users", "home")), -1)
+        anchor = user + 1 if user >= 0 else next((i for i, p in enumerate(lowered) if p in _ANCHORS), -1)
+    if anchor >= 0:
+        index = anchor + 1
+        while index < len(parts) - 1 and (lowered[index] in _GROUP_FOLDERS or parts[index].startswith(".")):
+            index += 1
+        if index < len(parts) - 1:
+            return parts[index]
+    for index in range(len(parts) - 2, -1, -1):
+        if lowered[index] not in _GROUP_FOLDERS and not parts[index].startswith("."):
+            return parts[index]
+    return ""
+
+
+def _cursor_usage() -> list:
+    """Requests and chats per day from Cursor's own code-tracking database. Counts only."""
+    import sqlite3
+    from datetime import datetime
+
+    file = HOME / ".cursor" / "ai-tracking" / "ai-code-tracking.db"
+    if not file.exists():
+        return []
+    since = int((time.time() - USAGE_LOOKBACK_DAYS * 86400) * 1000)
+    groups: dict = {}
+    try:
+        conn = sqlite3.connect(f"{file.as_uri()}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT timestamp, model, fileName, requestId, conversationId FROM ai_code_hashes WHERE timestamp >= ?",
+                (since,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, ValueError):
+        return []
+    for stamp, model, file_name, request_id, chat_id in rows:
+        try:
+            day = datetime.fromtimestamp(int(stamp) / 1000).strftime("%Y-%m-%d")
+        except (TypeError, ValueError, OSError):
+            continue
+        key = (day, _project_from_file(file_name or ""), model or "cursor")
+        group = groups.setdefault(key, (set(), set()))
+        if request_id:
+            group[0].add(request_id)
+        if chat_id:
+            group[1].add(chat_id)
+    out = []
+    for (day, project, model), (requests, chats) in groups.items():
+        if not requests:
+            continue
+        out.append({
+            "tool": "cursor", "day": day, "project": project, "model": model,
+            "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+            "count": len(requests), "chats": len(chats),
+        })
+    return out
+
+
+def _num(value) -> int:
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def _merge_usage(entries: list) -> list:
+    merged: dict = {}
+    for e in entries:
+        key = (e["tool"], e["day"], e["project"], e["model"])
+        seen = merged.get(key)
+        if not seen:
+            merged[key] = dict(e)
+            continue
+        for field in ("input", "output", "cacheRead", "cacheWrite"):
+            seen[field] += e[field]
+        for field in ("count", "chats"):
+            if field in e or field in seen:
+                seen[field] = seen.get(field, 0) + e.get(field, 0)
+    return sorted(merged.values(), key=lambda e: e["day"])
+
+
+def _parse_claude(text: str) -> list:
+    seen: set = set()
+    out: list = []
+    for line in text.split("\n"):
+        if '"usage"' not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        message = row.get("message") if isinstance(row, dict) else None
+        usage = message.get("usage") if isinstance(message, dict) else None
+        if row.get("type") != "assistant" or not isinstance(usage, dict):
+            continue
+        ident = message.get("id") or row.get("requestId") or row.get("uuid") or ""
+        if ident:
+            if ident in seen:
+                continue
+            seen.add(ident)
+        model = message.get("model") or ""
+        if not model or model == "<synthetic>":
+            continue
+        out.append({
+            "tool": "claude_code",
+            "day": _day_of(row.get("timestamp") or ""),
+            "project": _project_of(row.get("cwd") or ""),
+            "model": model,
+            "input": _num(usage.get("input_tokens")),
+            "output": _num(usage.get("output_tokens")),
+            "cacheRead": _num(usage.get("cache_read_input_tokens")),
+            "cacheWrite": _num(usage.get("cache_creation_input_tokens")),
+        })
+    return _merge_usage(out)
+
+
+def _parse_codex(text: str) -> list:
+    out: list = []
+    cwd = ""
+    model = ""
+    last = {"input": 0, "output": 0, "cached": 0, "cacheWrite": 0}
+    for line in text.split("\n"):
+        if '"cwd"' not in line and '"model"' not in line and "token_count" not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        payload = row.get("payload") if isinstance(row, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        if isinstance(payload.get("cwd"), str) and payload["cwd"]:
+            cwd = payload["cwd"]
+        if isinstance(payload.get("model"), str) and payload["model"]:
+            model = payload["model"]
+        info = payload.get("info") if payload.get("type") == "token_count" else None
+        total = info.get("total_token_usage") if isinstance(info, dict) else None
+        if not isinstance(total, dict):
+            continue
+        now = {
+            "input": _num(total.get("input_tokens")),
+            "output": _num(total.get("output_tokens")),
+            "cached": _num(total.get("cached_input_tokens")),
+            "cacheWrite": _num(total.get("cache_write_input_tokens")),
+        }
+        delta = {k: max(0, now[k] - last[k]) for k in now}
+        last = now
+        if not delta["input"] and not delta["output"]:
+            continue
+        out.append({
+            "tool": "codex",
+            "day": _day_of(row.get("timestamp") or ""),
+            "project": _project_of(cwd),
+            "model": model or "gpt-5",
+            "input": max(0, delta["input"] - delta["cached"]),
+            "output": delta["output"],
+            "cacheRead": delta["cached"],
+            "cacheWrite": delta["cacheWrite"],
+        })
+    return _merge_usage(out)
+
+
+def _usage_files() -> list:
+    files: list = []
+    claude_root = HOME / ".claude" / "projects"
+    if claude_root.is_dir():
+        for sub in claude_root.iterdir():
+            if sub.is_dir():
+                files.extend((f, "claude_code") for f in sub.glob("*.jsonl"))
+    codex_root = HOME / ".codex" / "sessions"
+    if codex_root.is_dir():
+        files.extend((f, "codex") for f in codex_root.rglob("*.jsonl"))
+    return files
+
+
+def read_usage() -> dict:
+    """Daily token use per tool, project, and model. Only changed files are parsed again."""
+    cache_file = usage_cache_path()
+    try:
+        cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        known = cache.get("files") if isinstance(cache, dict) and cache.get("version") == 2 else {}
+    except (OSError, ValueError):
+        known = {}
+    cutoff = time.time() - USAGE_LOOKBACK_DAYS * 86400
+    nxt: dict = {}
+    entries: list = []
+    parsed_count = 0
+
+    def save_cache() -> None:
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            merged = dict(known) if isinstance(known, dict) else {}
+            merged.update(nxt)
+            cache_file.write_text(json.dumps({"version": 2, "files": merged}), encoding="utf-8")
+        except OSError:
+            pass
+
+    for file, tool in _usage_files():
+        try:
+            st = file.stat()
+        except OSError:
+            continue
+        if st.st_mtime < cutoff or st.st_size > USAGE_MAX_BYTES:
+            continue
+        key = str(file)
+        hit = known.get(key) if isinstance(known, dict) else None
+        if hit and hit.get("size") == st.st_size and hit.get("mtime") == st.st_mtime:
+            parsed = hit.get("entries") or []
+        else:
+            text = read_text(file)
+            parsed = _parse_claude(text) if tool == "claude_code" else _parse_codex(text)
+            parsed_count += 1
+            # A slow first read over SSH may be cut off; keep what is done so the next open is quick.
+            if parsed_count % 40 == 0:
+                save_cache()
+        nxt[key] = {"size": st.st_size, "mtime": st.st_mtime, "entries": parsed}
+        entries.extend(parsed)
+    known = {}
+    save_cache()
+    entries.extend(_cursor_usage())
+    return {"ok": True, "message": "", "entries": _merge_usage(entries)}
 
 
 def make_link(src: Path, dest: Path) -> None:
@@ -791,6 +1150,14 @@ def main(argv: list[str]) -> int:
         out = list_trash()
     elif cmd == "untrash" and len(argv) >= 3:
         out = untrash(argv[2])
+    elif cmd == "translation" and len(argv) >= 3:
+        out = read_translation(argv[2])
+    elif cmd == "settranslation":
+        out = set_translation()
+    elif cmd == "projects":
+        out = read_project_skills()
+    elif cmd == "usage":
+        out = read_usage()
     else:
         out = {"ok": False, "message": "모르는 명령이에요.", "board": {"agents": [], "skills": []}}
     print(json.dumps(out, ensure_ascii=False))
