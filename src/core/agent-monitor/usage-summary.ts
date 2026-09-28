@@ -364,6 +364,69 @@ export function todaySentence(entries: UsageEntry[], day: string, projectLabel =
   return `오늘 ${where}에서 한 기록은 아직 없어요.`
 }
 
+/** One agent's column in the week graph. */
+export interface WeekAgent {
+  id: LogTool
+  title: string
+  /** USD for money tools, chats for Cursor. */
+  week: number
+  /** Share of the week's money, 0..1. Cursor is always 0. */
+  share: number
+  /** Seven values, oldest first. Same unit as `week`. */
+  days: number[]
+}
+
+export interface WeekGraph {
+  /** Seven days, oldest first. */
+  days: string[]
+  /** 월 화 수 … for each day. */
+  labels: string[]
+  agents: WeekAgent[]
+  /** "이번 주 DIOS에서 약 12달러어치 썼고, 대부분 Claude Code예요." */
+  sentence: string
+  /** Biggest single money day, for scaling bars. */
+  peak: number
+}
+
+const DAY_LABELS = ['일', '월', '화', '수', '목', '금', '토']
+
+/**
+ * Last seven days of one project, split by agent. Money tools share one scale so the Founder sees
+ * who costs the most; Cursor keeps its own count.
+ */
+export function weekGraph(entries: UsageEntry[], now: Date, projectLabel = ''): WeekGraph {
+  const days = lastDays(now, 7)
+  const labels = days.map((day) => DAY_LABELS[new Date(`${day}T12:00:00`).getDay()])
+  const rows = entries.filter((entry) => sameProject(entry.project, projectLabel))
+  const agents: WeekAgent[] = []
+  let moneyTotal = 0
+  for (const tool of ['claude_code', 'codex', 'cursor'] as LogTool[]) {
+    const counting = tool === 'cursor'
+    const values = days.map((day) => rows
+      .filter((entry) => entry.tool === tool && entry.day === day)
+      .reduce((sum, entry) => sum + (counting ? entry.chats || entry.count || 0 : costOf(entry.model, entry)), 0))
+    const week = values.reduce((sum, value) => sum + value, 0)
+    if (week < (counting ? 1 : 0.005)) continue
+    if (!counting) moneyTotal += week
+    agents.push({ id: tool, title: TOOL_TITLES[tool], week, share: 0, days: values })
+  }
+  for (const agent of agents) agent.share = agent.id !== 'cursor' && moneyTotal > 0 ? agent.week / moneyTotal : 0
+  const peak = Math.max(0, ...days.map((_, index) => agents.filter((agent) => agent.id !== 'cursor').reduce((sum, agent) => sum + agent.days[index], 0)))
+  const where = projectLabel.trim() || '이 컴퓨터'
+  let sentence: string
+  if (!agents.length) {
+    sentence = `이번 주 ${where}에서 쓴 기록이 아직 없어요.`
+  } else if (moneyTotal < 0.005) {
+    const cursor = agents.find((agent) => agent.id === 'cursor')!
+    sentence = `이번 주 ${where}에서 Cursor로 ${count(cursor.week)}번 대화했어요.`
+  } else {
+    const top = [...agents].filter((agent) => agent.id !== 'cursor').sort((left, right) => right.week - left.week)[0]
+    const tail = top.share >= 0.85 ? `거의 다 ${top.title}예요.` : top.share >= 0.55 ? `${Math.round(top.share * 100)}%는 ${top.title}예요.` : `${top.title}가 조금 더 많아요.`
+    sentence = `이번 주 ${where}에서 약 ${dollars(moneyTotal)}어치 썼고, ${tail}`
+  }
+  return { days, labels, agents, sentence, peak }
+}
+
 /** "지난주보다 30% 많이 썼어요", "지난주와 비슷해요", or '' when one of the weeks is empty. */
 export function trendLine(thisWeek: number, lastWeek: number): string {
   if (lastWeek < 0.5 || thisWeek < 0.005) return ''

@@ -51,6 +51,21 @@ describe('project skill switch', () => {
     expect(on.skills[0].lanes).toEqual(['계획', '만들기', '검사'])
   })
 
+  it('offers shared-folder skills the project does not use yet', () => {
+    const home = makeHome()
+    for (const name of ['founder-ux', 'spare-skill']) {
+      const folder = path.join(home, '.agents', 'skills', name)
+      fs.mkdirSync(folder, { recursive: true })
+      fs.writeFileSync(path.join(folder, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} 설명이에요.\n---\n# ${name}\n`)
+    }
+    const listed = listProjectSkills(home, 'JuPlan')
+    expect(listed.available.map((skill) => skill.name)).toEqual(['spare-skill'])
+    const added = setProjectSkill(home, 'JuPlan', 'spare-skill', true)
+    expect(added.message).toBe('JuPlan에 붙였어요.')
+    expect(added.skills.map((skill) => skill.name)).toEqual(['founder-ux', 'spare-skill'])
+    expect(added.available).toEqual([])
+  })
+
   it('says when the name does not match a project', () => {
     const home = makeHome()
     expect(listProjectSkills(home, '없는 프로젝트').matched).toBe(false)

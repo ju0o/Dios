@@ -9,6 +9,8 @@ import { initDatabase, getDatabase } from './db/schema'
 import { autoUpdater } from 'electron-updater'
 import { explainUpdateError, initialUpdateState, type UpdateState } from '../src/core/update/update-copy'
 import { BLURB_START_MS, createBlurbQueue, pendingBlurbNames, type BlurbProgress } from '../src/core/skill-library/blurb-queue'
+import { releaseNoteLines } from '../src/core/update/whats-new'
+import releaseNotesRaw from '../release-notes.md?raw'
 
 let mainWindow: BrowserWindow | null = null
 let databasePath = ''
@@ -196,6 +198,7 @@ async function checkForUpdate(quiet: boolean): Promise<UpdateState> {
 }
 
 ipcMain.handle('update:state', () => updateState)
+ipcMain.handle('update:whatsNew', () => ({ version: app.getVersion(), lines: releaseNoteLines(releaseNotesRaw) }))
 ipcMain.handle('update:check', () => checkForUpdate(false))
 ipcMain.handle('update:download', async () => {
   if (!app.isPackaged || updateState.phase !== 'available') return updateState
@@ -734,12 +737,12 @@ ipcMain.handle('library:blurbPause', () => {
 
 ipcMain.handle('project:skills', async (_event, projectName: string) => {
   const { listProjectSkills } = await import('../src/core/skill-board/project-skill-switch')
-  return listProjectSkills(os.homedir(), String(projectName || ''))
+  return listProjectSkills(os.homedir(), String(projectName || ''), connectedSkillRoots())
 })
 
 ipcMain.handle('project:skillSet', async (_event, projectName: string, skillName: string, on: boolean) => {
   const { setProjectSkill } = await import('../src/core/skill-board/project-skill-switch')
-  const result = setProjectSkill(os.homedir(), String(projectName || ''), String(skillName || ''), Boolean(on))
+  const result = setProjectSkill(os.homedir(), String(projectName || ''), String(skillName || ''), Boolean(on), connectedSkillRoots())
   if (result.matched && (result.message.includes('붙였어요') || result.message.includes('뺐어요'))) {
     recordActivity('skill', on ? '프로젝트에 스킬 붙이기' : '프로젝트에서 스킬 빼기', String(skillName || ''))
   }
@@ -774,6 +777,14 @@ ipcMain.handle('usage:today', async (_event, projectLabel: string) => {
   const now = new Date()
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   return { line: todaySentence(readCachedUsage(home), day, String(projectLabel || '')) }
+})
+
+ipcMain.handle('usage:week', async (_event, projectLabel: string) => {
+  const { readCachedUsage, usageCachePath } = await import('../src/core/agent-monitor/local-logs')
+  const { weekGraph } = await import('../src/core/agent-monitor/usage-summary')
+  const home = os.homedir()
+  if (!fs.existsSync(usageCachePath(home))) return null
+  return weekGraph(readCachedUsage(home), new Date(), String(projectLabel || ''))
 })
 
 ipcMain.handle('library:openFolder', async (_event, folder: string) => {

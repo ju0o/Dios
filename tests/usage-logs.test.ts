@@ -6,7 +6,7 @@ import remoteScript from '../src/core/skill-board/remote.py?raw'
 import Database from 'better-sqlite3'
 import { cursorEntries, parseClaudeLines, parseCodexLines, projectFromFile, projectOf, readCachedUsage, readLocalUsage, usageCachePath, type UsageEntry } from '../src/core/agent-monitor/local-logs'
 import { costOf, priceFor } from '../src/core/agent-monitor/pricing'
-import { buildUsageScreen, dollars, projectName, todaySentence, tokens, trendLine } from '../src/core/agent-monitor/usage-summary'
+import { buildUsageScreen, dollars, projectName, todaySentence, tokens, trendLine, weekGraph } from '../src/core/agent-monitor/usage-summary'
 
 /** A Cursor tracking database with the one table the reader looks at. */
 function writeCursorDb(home: string, rows: Array<{ timestamp: number; model: string; fileName: string; requestId: string; conversationId: string }>): void {
@@ -389,5 +389,32 @@ describe('the 사용량 screen', () => {
     expect(line).not.toContain('15달러')
     expect(todaySentence([], '2026-09-29', 'DIOS')).toContain('아직 없어요')
     expect(todaySentence(entries, '2026-09-29')).toContain('이 컴퓨터')
+  })
+
+  it('draws one week per agent for one project', () => {
+    const now = new Date(2026, 8, 29, 12)
+    const entries: UsageEntry[] = [
+      { tool: 'claude_code', day: '2026-09-29', project: 'Dios', model: 'claude-sonnet-4', input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+      { tool: 'claude_code', day: '2026-09-27', project: 'Dios', model: 'claude-sonnet-4', input: 3_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+      { tool: 'codex', day: '2026-09-28', project: 'Dios', model: 'gpt-5', input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+      { tool: 'cursor', day: '2026-09-29', project: 'Dios', model: 'composer', input: 0, output: 0, cacheRead: 0, cacheWrite: 0, chats: 4 },
+      { tool: 'claude_code', day: '2026-09-20', project: 'Dios', model: 'claude-sonnet-4', input: 9_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+      { tool: 'claude_code', day: '2026-09-29', project: 'other', model: 'claude-sonnet-4', input: 9_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+    ]
+    const graph = weekGraph(entries, now, 'DIOS')
+    expect(graph.days).toHaveLength(7)
+    expect(graph.days[6]).toBe('2026-09-29')
+    expect(graph.labels[6]).toBe('화')
+    expect(graph.agents.map((agent) => agent.id)).toEqual(['claude_code', 'codex', 'cursor'])
+    const claude = graph.agents[0]
+    expect(claude.days[6]).toBeCloseTo(3, 1)
+    expect(claude.days[4]).toBeCloseTo(9, 1)
+    expect(claude.share).toBeGreaterThan(0.8)
+    expect(graph.agents[2].week).toBe(4)
+    expect(graph.agents[2].share).toBe(0)
+    expect(graph.sentence).toContain('이번 주 DIOS에서 약')
+    expect(graph.sentence).toContain('Claude Code')
+    expect(weekGraph([], now, 'DIOS').sentence).toContain('아직 없어요')
+    expect(weekGraph(entries.filter((entry) => entry.tool === 'cursor'), now).sentence).toContain('Cursor로 4번')
   })
 })

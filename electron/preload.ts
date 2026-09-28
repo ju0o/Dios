@@ -161,6 +161,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   libraryOpenFolder: (folder: string) => ipcRenderer.invoke('library:openFolder', folder),
   startLook: () => ipcRenderer.invoke('start:look'),
   usageToday: (projectLabel: string) => ipcRenderer.invoke('usage:today', projectLabel),
+  usageWeek: (projectLabel: string) => ipcRenderer.invoke('usage:week', projectLabel),
+  whatsNew: () => ipcRenderer.invoke('update:whatsNew'),
   usageScreen: () => ipcRenderer.invoke('usage:screen'),
   usageSetCap: (cardId: string, amount: number) => ipcRenderer.invoke('usage:setCap', cardId, amount),
   usageOpenLink: (url: string) => ipcRenderer.invoke('usage:openLink', url),

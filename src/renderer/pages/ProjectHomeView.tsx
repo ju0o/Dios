@@ -1,6 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
+import { count, dollars, type WeekGraph } from '../../core/agent-monitor/usage-summary'
 import type { SkillSwitch } from '../../core/skill-board/project-skills'
+import type { SkillPick } from '../../core/skill-board/project-skill-switch'
 import { useScan } from '../stores/scanStore'
+
+/** Bars for the last seven days. Money agents share one scale; Cursor shows chats as small dots. */
+function WeekBars({ graph }: { graph: WeekGraph }) {
+  const money = graph.agents.filter((agent) => agent.id !== 'cursor')
+  const cursor = graph.agents.find((agent) => agent.id === 'cursor')
+  const peak = Math.max(graph.peak, 0.0001)
+  return (
+    <div className="week-graph" role="img" aria-label={graph.sentence}>
+      <div className="week-columns">
+        {graph.days.map((day, index) => (
+          <div key={day} className="week-column">
+            <div className="week-stack">
+              {money.map((agent) => (
+                <i key={agent.id} className={`week-bar is-${agent.id}`} style={{ height: `${Math.round((agent.days[index] / peak) * 100)}%` }} title={`${agent.title} ${dollars(agent.days[index])}`} />
+              ))}
+            </div>
+            {cursor && cursor.days[index] > 0 && <small className="week-chats" title={`Cursor 대화 ${count(cursor.days[index])}번`}>{count(cursor.days[index])}</small>}
+            <span className={`week-label ${index === 6 ? 'is-today' : ''}`}>{graph.labels[index]}</span>
+          </div>
+        ))}
+      </div>
+      <ul className="week-legend">
+        {money.map((agent) => (
+          <li key={agent.id}><i className={`week-dot is-${agent.id}`} />{agent.title} 약 {dollars(agent.week)}{agent.share > 0 ? ` · ${Math.round(agent.share * 100)}%` : ''}</li>
+        ))}
+        {cursor && <li><i className="week-dot is-cursor" />Cursor 대화 {count(cursor.week)}번</li>}
+      </ul>
+    </div>
+  )
+}
 
 type ProjectHomeViewProps = { onNavigate: (view: string) => void }
 
@@ -17,9 +49,13 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
   const [transferMessage, setTransferMessage] = useState('')
   const [todayLine, setTodayLine] = useState('')
   const [projectSkills, setProjectSkills] = useState<SkillSwitch[]>([])
+  const [availableSkills, setAvailableSkills] = useState<SkillPick[]>([])
   const [skillMatch, setSkillMatch] = useState<{ matched: boolean; message: string } | null>(null)
   const [skillNote, setSkillNote] = useState('')
   const [switching, setSwitching] = useState('')
+  const [picking, setPicking] = useState(false)
+  const [pickSearch, setPickSearch] = useState('')
+  const [week, setWeek] = useState<WeekGraph | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -55,6 +91,11 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
     api.usageToday(label).then((result: { line?: string }) => {
       if (!cancel) setTodayLine(result?.line || '')
     }).catch(() => { if (!cancel) setTodayLine('') })
+    if (typeof api.usageWeek === 'function') {
+      api.usageWeek(label).then((graph: WeekGraph | null) => {
+        if (!cancel) setWeek(graph && graph.agents.length ? graph : null)
+      }).catch(() => { if (!cancel) setWeek(null) })
+    }
     return () => { cancel = true }
   }, [selectedProjectId, projects])
 
@@ -66,31 +107,39 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
       return
     }
     let cancel = false
-    api.projectSkills(name).then((result: { matched?: boolean; message?: string; skills?: SkillSwitch[] }) => {
+    api.projectSkills(name).then((result: { matched?: boolean; message?: string; skills?: SkillSwitch[]; available?: SkillPick[] }) => {
       if (cancel || !result) return
       setProjectSkills(result.skills || [])
+      setAvailableSkills(result.available || [])
       setSkillMatch({ matched: Boolean(result.matched), message: result.message || '' })
       setSkillNote('')
+      setPicking(false)
     }).catch(() => {
       if (!cancel) setSkillMatch({ matched: false, message: '스킬 목록을 읽지 못했어요. 잠시 뒤에 다시 열어 보세요.' })
     })
     return () => { cancel = true }
   }, [selectedProjectId, projects])
 
-  async function toggleSkill(skill: SkillSwitch) {
+  async function setSkill(skillName: string, on: boolean) {
     const name = projects.find((project) => project.id === selectedProjectId)?.name || ''
     if (!name || typeof api.projectSkillSet !== 'function' || switching) return
-    setSwitching(skill.name)
+    setSwitching(skillName)
     try {
-      const result = await api.projectSkillSet(name, skill.name, !skill.on)
+      const result = await api.projectSkillSet(name, skillName, on)
       setProjectSkills(result?.skills || [])
-      setSkillNote(result?.message || (skill.on ? '뺐어요.' : '붙였어요.'))
+      setAvailableSkills(result?.available || [])
+      setSkillNote(result?.message || (on ? '붙였어요.' : '뺐어요.'))
     } catch {
       setSkillNote('바꾸지 못했어요. 한 번 더 눌러 주세요.')
     } finally {
       setSwitching('')
     }
   }
+
+  const pickList = useMemo(() => {
+    const needle = pickSearch.trim().toLowerCase()
+    return availableSkills.filter((skill) => !needle || `${skill.name} ${skill.korean} ${skill.summary}`.toLowerCase().includes(needle))
+  }, [availableSkills, pickSearch])
 
   const currentPhase = roadmap.find((phase) => phase.status === 'active') || roadmap[0]
   const currentTasks = currentPhase?.tasks || []
@@ -133,6 +182,12 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
           <h1>{activeProject?.name || '지금 프로젝트는 어디까지 왔나요?'}</h1>
           <p>지금 상태와 다음에 할 일을 보고, 필요한 곳으로 바로 이동하세요.</p>
           {todayLine && <p className="today-line">{todayLine}</p>}
+          {week && (
+            <div className="week-block">
+              <p className="week-sentence">{week.sentence}</p>
+              <WeekBars graph={week} />
+            </div>
+          )}
         </div>
         <div className="hero-actions">
           {projects.length > 0 && <select value={selectedProjectId} onChange={(event) => { setSelectedProjectId(event.target.value); localStorage.setItem('dios:activeProject', event.target.value) }} className="project-select">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}
@@ -153,7 +208,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
           {skillNote && <p className="notice-line" role="status">{skillNote}</p>}
           {skillMatch === null && <p className="project-skill-empty">스킬을 불러오고 있어요.</p>}
           {skillMatch && !skillMatch.matched && <p className="project-skill-empty">{skillMatch.message}</p>}
-          {skillMatch?.matched && projectSkills.length === 0 && <p className="project-skill-empty">이 프로젝트에 붙은 스킬이 없어요.</p>}
+          {skillMatch?.matched && projectSkills.length === 0 && <p className="project-skill-empty">이 프로젝트에 붙은 스킬이 없어요. 아래에서 골라 붙여 보세요.</p>}
           <ul className="project-skill-rows">
             {projectSkills.map((skill) => (
               <li key={skill.name}>
@@ -162,10 +217,34 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
                   <small>{skill.on ? '켜 둠' : '꺼 둠'}{skill.on && skill.lanes.length > 0 ? ` · ${skill.lanes.join(' · ')}` : ''}</small>
                   {skill.korean && <details className="skill-raw"><summary>원문 보기</summary><span>{skill.name}</span></details>}
                 </div>
-                <button type="button" className={skill.on ? 'skill-switch is-on' : 'skill-switch is-off'} aria-pressed={skill.on} disabled={switching === skill.name} onClick={() => void toggleSkill(skill)}>{switching === skill.name ? '바꾸는 중' : skill.on ? '끄기' : '켜기'}</button>
+                <button type="button" className={skill.on ? 'skill-switch is-on' : 'skill-switch is-off'} aria-pressed={skill.on} disabled={switching === skill.name} onClick={() => void setSkill(skill.name, !skill.on)}>{switching === skill.name ? '바꾸는 중' : skill.on ? '끄기' : '켜기'}</button>
               </li>
             ))}
           </ul>
+          {skillMatch?.matched && availableSkills.length > 0 && (
+            <div className="project-skill-pick">
+              <button type="button" className="skill-action" aria-expanded={picking} onClick={() => setPicking((open) => !open)}>
+                {picking ? '고르기 닫기' : `다른 스킬 붙이기 · ${availableSkills.length}개 더 있어요`}
+              </button>
+              {picking && (
+                <>
+                  <input className="library-input" value={pickSearch} onChange={(event) => setPickSearch(event.target.value)} placeholder="이름이나 설명으로 찾기" aria-label="붙일 스킬 찾기" />
+                  <ul className="project-skill-rows">
+                    {pickList.map((skill) => (
+                      <li key={skill.name}>
+                        <div>
+                          <b>{skill.korean || skill.name}</b>
+                          {(skill.korean || skill.summary) && <small>{skill.korean ? skill.name : skill.summary}</small>}
+                        </div>
+                        <button type="button" className="skill-switch is-off" disabled={switching === skill.name} onClick={() => void setSkill(skill.name, true)}>{switching === skill.name ? '붙이는 중' : '붙이기'}</button>
+                      </li>
+                    ))}
+                    {pickList.length === 0 && <li><p className="project-skill-empty">그 말로 찾은 스킬이 없어요.</p></li>}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         </section>
       )}
 

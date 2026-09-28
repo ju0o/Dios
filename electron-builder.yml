@@ -25,3 +25,5 @@ publish:
   owner: ju0o
   repo: Dios
   releaseType: release
+releaseInfo:
+  releaseNotesFile: release-notes.md

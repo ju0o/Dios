@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { readLibrary } from '../skill-library/catalog'
 import { blurbSentences } from './translation-store'
 import {
   applyProjectSkill,
@@ -11,6 +12,13 @@ import {
   type SkillSwitch,
 } from './project-skills'
 
+/** A shared-folder skill the project could still take. */
+export interface SkillPick {
+  name: string
+  korean: string
+  summary: string
+}
+
 /** Skills on one project, ready for the project home. */
 export interface ProjectSkillList {
   /** True when an Agent Relay project matches this name. */
@@ -18,6 +26,8 @@ export interface ProjectSkillList {
   label: string
   message: string
   skills: SkillSwitch[]
+  /** Skills in the shared folder that this project does not use yet. */
+  available: SkillPick[]
 }
 
 interface OffFile {
@@ -69,10 +79,20 @@ function writePortfolio(home: string, portfolio: unknown): void {
   fs.renameSync(tmp, file)
 }
 
+/** Shared-folder skills the project does not use yet, so the Founder can add one from the home screen. */
+export function availableSkills(home: string, taken: SkillSwitch[], extraRoots: string[] = []): SkillPick[] {
+  const used = new Set(taken.map((skill) => skill.name))
+  const korean = blurbSentences(home)
+  return readLibrary(home, extraRoots)
+    .filter((skill) => skill.canonical && !used.has(skill.name))
+    .map((skill) => ({ name: skill.name, korean: skill.korean || korean[skill.name] || '', summary: skill.summary }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
 /** Skills attached to the project with this name, including ones turned off here. */
-export function listProjectSkills(home: string, projectName: string): ProjectSkillList {
+export function listProjectSkills(home: string, projectName: string, extraRoots: string[] = []): ProjectSkillList {
   const loaded = readPortfolio(home)
-  if (!loaded.ok) return { matched: false, label: '', message: loaded.message, skills: [] }
+  if (!loaded.ok) return { matched: false, label: '', message: loaded.message, skills: [], available: [] }
   const projectId = matchPortfolioId(loaded.portfolio, projectName)
   if (!projectId) {
     return {
@@ -80,15 +100,18 @@ export function listProjectSkills(home: string, projectName: string): ProjectSki
       label: '',
       message: '이 이름과 같은 프로젝트가 없어요. Agent Relay에 있는 프로젝트 이름과 같게 만들면 여기서 켜고 끌 수 있어요.',
       skills: [],
+      available: [],
     }
   }
   const project = projectsFromPortfolio(loaded.portfolio).find((item) => item.id === projectId) ?? null
   const off = readOff(home).projects[projectId] ?? []
+  const skills = switchesFor(project, off, blurbSentences(home))
   return {
     matched: true,
     label: projectLabel(projectId),
     message: '',
-    skills: switchesFor(project, off, blurbSentences(home)),
+    skills,
+    available: availableSkills(home, skills, extraRoots),
   }
 }
 
@@ -96,15 +119,15 @@ export function listProjectSkills(home: string, projectName: string): ProjectSki
  * Turn one skill on or off for one project.
  * Off keeps the skill file and remembers the name, so it can be turned on again from this screen.
  */
-export function setProjectSkill(home: string, projectName: string, skillName: string, on: boolean): ProjectSkillList {
+export function setProjectSkill(home: string, projectName: string, skillName: string, on: boolean, extraRoots: string[] = []): ProjectSkillList {
   const loaded = readPortfolio(home)
-  if (!loaded.ok) return { matched: false, label: '', message: loaded.message, skills: [] }
+  if (!loaded.ok) return { matched: false, label: '', message: loaded.message, skills: [], available: [] }
   const projectId = matchPortfolioId(loaded.portfolio, projectName)
   if (!projectId) {
-    return { matched: false, label: '', message: '이 이름과 같은 프로젝트가 없어요.', skills: [] }
+    return { matched: false, label: '', message: '이 이름과 같은 프로젝트가 없어요.', skills: [], available: [] }
   }
   if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(skillName)) {
-    return { matched: true, label: projectLabel(projectId), message: '스킬 이름이 이상해요.', skills: listProjectSkills(home, projectName).skills }
+    return { ...listProjectSkills(home, projectName, extraRoots), message: '스킬 이름이 이상해요.' }
   }
   const touched = applyProjectSkill(loaded.portfolio, projectId, skillName, on)
   if (touched > 0) writePortfolio(home, loaded.portfolio)
@@ -115,6 +138,6 @@ export function setProjectSkill(home: string, projectName: string, skillName: st
   offFile.projects[projectId] = [...current]
   writeOff(home, offFile)
   const label = projectLabel(projectId)
-  const listed = listProjectSkills(home, projectName)
+  const listed = listProjectSkills(home, projectName, extraRoots)
   return { ...listed, message: switchMessage(label, on, touched) }
 }
