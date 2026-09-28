@@ -315,6 +315,15 @@ body {
 .week-legend li { display: flex; align-items: center; gap: 6px; }
 .week-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
 .project-skill-pick { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.relay-make { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); }
+.relay-make p { margin: 0; font-size: 16px; line-height: 1.5; color: rgba(255,255,255,.82); }
+.relay-make .library-chip { min-height: 44px; font-size: 15px; }
+.week-projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 12px; }
+.week-project { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.04); }
+.week-project h4 { margin: 0; font-size: 16px; }
+.week-project .week-sentence { font-size: 14px; color: rgba(255,255,255,.7); }
+.library-projects { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); }
+.library-projects .project-skill-rows li { border-bottom: 0; min-height: 40px; padding: 4px 0; }
 .whats-new { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 12px 24px 0; padding: 12px 16px; border-radius: 14px; background: rgba(20,184,166,.14); border: 1px solid rgba(20,184,166,.4); color: #ccfbf1; }
 .whats-new-body { display: flex; flex-direction: column; gap: 6px; }
 .whats-new p { margin: 0; font-size: 16px; line-height: 1.5; }

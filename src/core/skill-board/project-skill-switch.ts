@@ -79,6 +79,30 @@ function writePortfolio(home: string, portfolio: unknown): void {
   fs.renameSync(tmp, file)
 }
 
+/** One Agent Relay project, for picking on the project home or a library card. */
+export interface RelayProject {
+  id: string
+  label: string
+  /** Skill names on any lane, sorted. */
+  skills: string[]
+}
+
+/** Every project in this computer's Agent Relay, with or without skills. Empty when there is no Agent Relay. */
+export function relayProjects(home: string): RelayProject[] {
+  const loaded = readPortfolio(home)
+  if (!loaded.ok) return []
+  const withSkills = new Map(projectsFromPortfolio(loaded.portfolio).map((project) => [project.id, project]))
+  const out: RelayProject[] = []
+  for (const item of loaded.portfolio.projects ?? []) {
+    const id = typeof item?.id === 'string' ? item.id : ''
+    if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(id) || out.some((row) => row.id === id)) continue
+    const lanes = withSkills.get(id)?.lanes ?? {}
+    const skills = [...new Set(Object.values(lanes).flat())].sort()
+    out.push({ id, label: projectLabel(id), skills })
+  }
+  return out.sort((left, right) => left.label.localeCompare(right.label, 'ko', { sensitivity: 'base' }))
+}
+
 /** Shared-folder skills the project does not use yet, so the Founder can add one from the home screen. */
 export function availableSkills(home: string, taken: SkillSwitch[], extraRoots: string[] = []): SkillPick[] {
   const used = new Set(taken.map((skill) => skill.name))

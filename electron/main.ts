@@ -735,6 +735,11 @@ ipcMain.handle('library:blurbPause', () => {
   return blurbQueue?.state() ?? { phase: 'paused', done: 0, total: 0, name: '', korean: '', message: '한글 설명을 멈췄어요.' }
 })
 
+ipcMain.handle('project:relayList', async () => {
+  const { relayProjects } = await import('../src/core/skill-board/project-skill-switch')
+  return relayProjects(os.homedir())
+})
+
 ipcMain.handle('project:skills', async (_event, projectName: string) => {
   const { listProjectSkills } = await import('../src/core/skill-board/project-skill-switch')
   return listProjectSkills(os.homedir(), String(projectName || ''), connectedSkillRoots())

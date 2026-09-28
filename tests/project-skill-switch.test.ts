@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { listProjectSkills, setProjectSkill } from '../src/core/skill-board/project-skill-switch'
+import { listProjectSkills, relayProjects, setProjectSkill } from '../src/core/skill-board/project-skill-switch'
 
 const homes: string[] = []
 
@@ -64,6 +64,20 @@ describe('project skill switch', () => {
     expect(added.message).toBe('JuPlan에 붙였어요.')
     expect(added.skills.map((skill) => skill.name)).toEqual(['founder-ux', 'spare-skill'])
     expect(added.available).toEqual([])
+  })
+
+  it('lists every Agent Relay project with its skills, even one with none', () => {
+    const home = makeHome()
+    const file = path.join(home, '.local', 'share', 'AgentRelay', 'night-runtime', 'config', 'portfolio.json')
+    const portfolio = JSON.parse(fs.readFileSync(file, 'utf8'))
+    portfolio.projects.push({ id: 'juceipt' }, { id: 'bad name' })
+    fs.writeFileSync(file, JSON.stringify(portfolio))
+    expect(relayProjects(home)).toEqual([
+      { id: 'dios', label: 'Dios', skills: ['demo-skill'] },
+      { id: 'juceipt', label: 'JuCeipt', skills: [] },
+      { id: 'juplan', label: 'JuPlan', skills: ['founder-ux'] },
+    ])
+    expect(relayProjects(fs.mkdtempSync(path.join(os.tmpdir(), 'dios-empty-')))).toEqual([])
   })
 
   it('says when the name does not match a project', () => {

@@ -142,6 +142,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('library:blurb', listener)
     return () => ipcRenderer.removeListener('library:blurb', listener)
   },
+  projectRelayList: () => ipcRenderer.invoke('project:relayList'),
   projectSkills: (projectName: string) => ipcRenderer.invoke('project:skills', projectName),
   projectSkillSet: (projectName: string, skillName: string, on: boolean) => ipcRenderer.invoke('project:skillSet', projectName, skillName, on),
   updateState: () => ipcRenderer.invoke('update:state'),

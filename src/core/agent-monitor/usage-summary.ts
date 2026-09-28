@@ -71,6 +71,8 @@ export interface UsageScreen {
   /** Small or unknown folders, folded under 그 밖의 폴더. */
   otherProjects: UsageProject[]
   places: UsagePlace[]
+  /** Last seven days for the biggest projects, so they can be compared side by side. */
+  weekProjects: Array<{ name: string; graph: WeekGraph }>
   /** Cards that are over or close to their amount. Shown on the nav badge. */
   alerts: number
   /** Cards over their amount; the badge turns red when this is above zero. */
@@ -140,6 +142,8 @@ const PRODUCT_HINTS: Array<[string, string]> = [
 const OTHER_SHARE = 0.08
 /** Days into the month before the pace is worth showing. */
 const MIN_DAYS_FOR_PACE = 3
+/** Projects drawn side by side in the week section. */
+const MAX_WEEK_PROJECTS = 6
 
 /** Turn raw entries and key snapshots into the whole 사용량 screen. Pure, so it is easy to test. */
 export function buildUsageScreen(input: UsageInput): UsageScreen {
@@ -327,7 +331,13 @@ export function buildUsageScreen(input: UsageInput): UsageScreen {
     }
   }
 
-  return { headline, quiet, trend, cards, projects, otherProjects, places, alerts, over, builtAt: now.getTime() }
+  const allEntries = input.sources.flatMap((source) => source.entries)
+  const weekProjects = projects
+    .slice(0, MAX_WEEK_PROJECTS)
+    .map((project) => ({ name: project.name, graph: weekGraph(allEntries, now, project.name) }))
+    .filter((row) => row.graph.agents.length > 0)
+
+  return { headline, quiet, trend, cards, projects, otherProjects, places, weekProjects, alerts, over, builtAt: now.getTime() }
 }
 
 /** How many cards need a look, from cached entries alone. Used for the nav badge at start. */

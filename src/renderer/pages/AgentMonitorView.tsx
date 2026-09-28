@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { count, dollars, tokens, type UsageCard, type UsageScreen } from '../../core/agent-monitor/usage-summary'
+import { WeekBars } from '../components/WeekBars'
 import { whenText } from './skill-board-api'
 
 interface CapResult {
@@ -176,6 +177,29 @@ export function AgentMonitorView() {
 
       {!hasCaps && screen.cards.some((card) => card.kind === 'subscription' || card.kind === 'api') && (
         <p className="skill-quiet">카드마다 "이 금액 넘으면 알려 줘"를 정해 두면 왼쪽 메뉴에 숫자가 붙어서 안 열어 봐도 알 수 있어요.</p>
+      )}
+
+      {(screen.weekProjects?.length ?? 0) > 0 && (
+        <section className="skill-card work-card" aria-label="이번 주 프로젝트별">
+          <header className="key-group-head">
+            <h3>이번 주 프로젝트별</h3>
+            <small>막대 높이는 모든 프로젝트가 같은 기준이에요</small>
+          </header>
+          <div className="week-projects">
+            {screen.weekProjects.map((row) => (
+              <div key={row.name} className="week-project">
+                <h4>{row.name}</h4>
+                <WeekBars graph={row.graph} peak={Math.max(...screen.weekProjects.map((item) => item.graph.peak))} compact />
+                <p className="week-sentence">{row.graph.sentence.replace(/^이번 주 .*?에서 /, '')}</p>
+              </div>
+            ))}
+          </div>
+          <ul className="week-legend">
+            <li><i className="week-dot is-claude_code" />Claude Code</li>
+            <li><i className="week-dot is-codex" />Codex</li>
+            <li><i className="week-dot is-cursor" />Cursor 대화 수</li>
+          </ul>
+        </section>
       )}
 
       {(screen.projects.length > 0 || screen.otherProjects.length > 0) && (

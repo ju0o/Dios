@@ -3,6 +3,7 @@ import type { LibrarySkill } from '../../core/skill-library/catalog'
 import type { FetchOutcome, SkillCandidate } from '../../core/skill-library/fetch-skill'
 import { blurbStatusLine, type BlurbProgress } from '../../core/skill-library/blurb-queue'
 import type { LibraryListing, LibraryResult, RemoteSkill } from '../../core/skill-library/library-service'
+import type { ProjectSkillList, RelayProject } from '../../core/skill-board/project-skill-switch'
 import { whenText } from './skill-board-api'
 import { OPEN_KEY } from './SkillBoardView'
 
@@ -21,6 +22,8 @@ interface LibraryApi {
   libraryBlurbPause?: () => Promise<BlurbProgress>
   onLibraryBlurb?: (callback: (progress: BlurbProgress) => void) => () => void
   libraryOpenFolder: (folder: string) => Promise<{ ok: boolean; message: string }>
+  projectRelayList?: () => Promise<RelayProject[]>
+  projectSkillSet?: (projectName: string, skillName: string, on: boolean) => Promise<ProjectSkillList>
 }
 
 type Filter = 'all' | 'new' | 'shared' | 'loose' | `agent:${string}`
@@ -76,7 +79,36 @@ export function SkillView({ onNavigate }: SkillViewProps) {
   const [pickedAgents, setPickedAgents] = useState<string[]>([])
   const [koreanProgress, setKoreanProgress] = useState<{ done: number; total: number } | null>(null)
   const [blurb, setBlurb] = useState<BlurbProgress | null>(null)
+  const [relayProjects, setRelayProjects] = useState<RelayProject[]>([])
+  const [projectFor, setProjectFor] = useState('')
+  const [projectBusy, setProjectBusy] = useState('')
   const stopKorean = useRef(false)
+
+  async function loadRelay() {
+    const api = libraryApi()
+    if (!api?.projectRelayList) return
+    try {
+      setRelayProjects(await api.projectRelayList())
+    } catch {
+      setRelayProjects([])
+    }
+  }
+
+  async function toggleOnProject(skill: LibrarySkill, relay: RelayProject) {
+    const api = libraryApi()
+    if (!api?.projectSkillSet || projectBusy) return
+    const on = !relay.skills.includes(skill.name)
+    setProjectBusy(relay.id)
+    try {
+      const result = await api.projectSkillSet(relay.id, skill.name, on)
+      setNotice({ ok: result.matched, text: result.message || (on ? '붙였어요.' : '뺐어요.') })
+      await loadRelay()
+    } catch {
+      setNotice({ ok: false, text: '바꾸지 못했어요. 한 번 더 눌러 주세요.' })
+    } finally {
+      setProjectBusy('')
+    }
+  }
 
   async function load() {
     const api = libraryApi()
@@ -94,6 +126,7 @@ export function SkillView({ onNavigate }: SkillViewProps) {
 
   useEffect(() => {
     void load()
+    void loadRelay()
     const api = libraryApi()
     if (!api?.onLibraryBlurb) return
     void api.libraryBlurbState?.().then((progress) => { if (progress) setBlurb(progress) })
@@ -419,8 +452,32 @@ export function SkillView({ onNavigate }: SkillViewProps) {
               {!skill.canonical && (
                 <button type="button" className="skill-action is-primary" onClick={() => void adopt(skill)} disabled={busy}>공용 폴더에 넣고 붙이기</button>
               )}
+              {skill.canonical && relayProjects.length > 0 && (
+                <button type="button" className="skill-action" aria-expanded={projectFor === skill.name} onClick={() => setProjectFor((current) => current === skill.name ? '' : skill.name)}>
+                  {projectFor === skill.name ? '프로젝트 닫기' : `프로젝트에 붙이기${relayProjects.filter((relay) => relay.skills.includes(skill.name)).length ? ` · ${relayProjects.filter((relay) => relay.skills.includes(skill.name)).length}곳에 붙음` : ''}`}
+                </button>
+              )}
               {skill.canonical && <button type="button" className="skill-link" onClick={() => openOnBoard(skill)}>스킬 보드에서 보기</button>}
             </div>
+
+            {projectFor === skill.name && (
+              <div className="library-projects" role="group" aria-label="붙일 프로젝트">
+                <p className="skill-quiet">Agent Relay 프로젝트의 계획·만들기·검사에 붙어요. 끄면 그 프로젝트에서만 빠지고 스킬 글은 그대로예요.</p>
+                <ul className="project-skill-rows">
+                  {relayProjects.map((relay) => {
+                    const on = relay.skills.includes(skill.name)
+                    return (
+                      <li key={relay.id}>
+                        <div><b>{relay.label}</b><small>{on ? '붙어 있어요' : '아직 안 붙었어요'}</small></div>
+                        <button type="button" className={on ? 'skill-switch is-on' : 'skill-switch is-off'} aria-pressed={on} disabled={projectBusy === relay.id} onClick={() => void toggleOnProject(skill, relay)}>
+                          {projectBusy === relay.id ? '바꾸는 중' : on ? '끄기' : '붙이기'}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )}
 
             {attachFor === skill.name && (
               <div className="library-attach" role="group" aria-label="붙일 에이전트">

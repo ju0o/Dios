@@ -243,6 +243,11 @@ describe('the 사용량 screen', () => {
     expect(screen.headline).toContain('Claude Code')
     expect(screen.projects[0]).toEqual({ name: 'Agent Relay', month: expect.closeTo(7.25, 5), tools: ['Claude Code', 'Codex'] })
     expect(screen.projects.find((project) => project.name === 'JuCeipt')?.tools).toEqual(['Claude Code'])
+    expect(screen.weekProjects.map((row) => row.name)).toEqual(['Agent Relay', 'JuCeipt'])
+    const relayWeek = screen.weekProjects[0].graph
+    expect(relayWeek.agents.map((agent) => agent.id)).toEqual(['claude_code', 'codex'])
+    expect(relayWeek.agents[0].days[6]).toBeCloseTo(3)
+    expect(relayWeek.agents[1].days[5]).toBeCloseTo(1.25)
     // 28 days in, 10.25 so far → about 11 by the 30th.
     expect(claude.projected).toBeCloseTo((9 / 28) * 30)
     expect(screen.quiet).toContain('월말엔 약')

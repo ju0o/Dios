@@ -1,38 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { count, dollars, type WeekGraph } from '../../core/agent-monitor/usage-summary'
+import type { WeekGraph } from '../../core/agent-monitor/usage-summary'
 import type { SkillSwitch } from '../../core/skill-board/project-skills'
-import type { SkillPick } from '../../core/skill-board/project-skill-switch'
+import type { RelayProject, SkillPick } from '../../core/skill-board/project-skill-switch'
+import { WeekBars } from '../components/WeekBars'
 import { useScan } from '../stores/scanStore'
-
-/** Bars for the last seven days. Money agents share one scale; Cursor shows chats as small dots. */
-function WeekBars({ graph }: { graph: WeekGraph }) {
-  const money = graph.agents.filter((agent) => agent.id !== 'cursor')
-  const cursor = graph.agents.find((agent) => agent.id === 'cursor')
-  const peak = Math.max(graph.peak, 0.0001)
-  return (
-    <div className="week-graph" role="img" aria-label={graph.sentence}>
-      <div className="week-columns">
-        {graph.days.map((day, index) => (
-          <div key={day} className="week-column">
-            <div className="week-stack">
-              {money.map((agent) => (
-                <i key={agent.id} className={`week-bar is-${agent.id}`} style={{ height: `${Math.round((agent.days[index] / peak) * 100)}%` }} title={`${agent.title} ${dollars(agent.days[index])}`} />
-              ))}
-            </div>
-            {cursor && cursor.days[index] > 0 && <small className="week-chats" title={`Cursor 대화 ${count(cursor.days[index])}번`}>{count(cursor.days[index])}</small>}
-            <span className={`week-label ${index === 6 ? 'is-today' : ''}`}>{graph.labels[index]}</span>
-          </div>
-        ))}
-      </div>
-      <ul className="week-legend">
-        {money.map((agent) => (
-          <li key={agent.id}><i className={`week-dot is-${agent.id}`} />{agent.title} 약 {dollars(agent.week)}{agent.share > 0 ? ` · ${Math.round(agent.share * 100)}%` : ''}</li>
-        ))}
-        {cursor && <li><i className="week-dot is-cursor" />Cursor 대화 {count(cursor.week)}번</li>}
-      </ul>
-    </div>
-  )
-}
 
 type ProjectHomeViewProps = { onNavigate: (view: string) => void }
 
@@ -56,6 +27,37 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
   const [picking, setPicking] = useState(false)
   const [pickSearch, setPickSearch] = useState('')
   const [week, setWeek] = useState<WeekGraph | null>(null)
+  const [relayProjects, setRelayProjects] = useState<RelayProject[]>([])
+  const [creating, setCreating] = useState('')
+
+  useEffect(() => {
+    if (typeof api.projectRelayList !== 'function') return
+    let cancel = false
+    api.projectRelayList().then((list: RelayProject[]) => { if (!cancel) setRelayProjects(list || []) }).catch(() => {})
+    return () => { cancel = true }
+  }, [])
+
+  /** Agent Relay projects DIOS does not have a home for yet, by name. */
+  const relayToMake = useMemo(() => {
+    const have = new Set(projects.map((project) => String(project.name || '').trim().toLowerCase()))
+    return relayProjects.filter((relay) => !have.has(relay.label.toLowerCase()) && !have.has(relay.id.toLowerCase()))
+  }, [relayProjects, projects])
+
+  async function createFromRelay(relay: RelayProject) {
+    if (typeof api.createProject !== 'function' || creating) return
+    setCreating(relay.id)
+    try {
+      const project = await api.createProject({ name: relay.label, description: `Agent Relay의 ${relay.label} 프로젝트` })
+      setProjects((current) => [project, ...current])
+      setSelectedProjectId(project.id)
+      localStorage.setItem('dios:activeProject', project.id)
+      setTransferMessage(`${relay.label} 홈을 만들었어요. 붙은 스킬 ${relay.skills.length}개가 아래에 나와요.`)
+    } catch {
+      setTransferMessage('프로젝트를 만들지 못했어요. 한 번 더 눌러 주세요.')
+    } finally {
+      setCreating('')
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -200,6 +202,19 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
       {transferMessage && <div className="notice-line">{transferMessage}</div>}
 
       {projects.length === 0 && <div className="project-create-line"><span>아직 프로젝트가 없어요. 만들면 이 화면이 그 프로젝트의 홈이 돼요.</span><div><input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && createProject()} placeholder="프로젝트 이름" aria-label="프로젝트 이름" /><button onClick={createProject} className="text-link">만들기</button></div></div>}
+
+      {relayToMake.length > 0 && (projects.length === 0 || (skillMatch && !skillMatch.matched)) && (
+        <div className="relay-make" role="group" aria-label="Agent Relay 프로젝트로 만들기">
+          <p>{projects.length === 0 ? 'Agent Relay에 있는 프로젝트를 그대로 홈으로 만들 수 있어요. 이름이 같아야 스킬을 켜고 끌 수 있어요.' : '이 이름은 Agent Relay에 없어요. 아래에서 고르면 이름이 맞는 홈을 새로 만들어요.'}</p>
+          <div className="library-chips">
+            {relayToMake.map((relay) => (
+              <button key={relay.id} type="button" className="library-chip" disabled={Boolean(creating)} onClick={() => void createFromRelay(relay)}>
+                {creating === relay.id ? '만드는 중…' : `${relay.label} 만들기`}{relay.skills.length ? ` · 스킬 ${relay.skills.length}개` : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {activeProject && typeof api.projectSkills === 'function' && (
         <section className="project-skill-home" aria-label="이 프로젝트의 스킬">
