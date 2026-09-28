@@ -30,3 +30,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build -- --publish always
+
+      # electron-builder puts the notes into latest.yml for the app; this shows the same lines on the release page.
+      - name: Release notes on the GitHub page
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit ${{ github.ref_name }} --notes-file release-notes.md
