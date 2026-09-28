@@ -135,6 +135,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   libraryTake: (placeId: string, name: string) => ipcRenderer.invoke('library:take', placeId, name),
   libraryGather: () => ipcRenderer.invoke('library:gather'),
   libraryBlurb: (name: string) => ipcRenderer.invoke('library:blurb', name),
+  libraryBlurbState: () => ipcRenderer.invoke('library:blurbState'),
+  libraryBlurbPause: () => ipcRenderer.invoke('library:blurbPause'),
+  onLibraryBlurb: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress)
+    ipcRenderer.on('library:blurb', listener)
+    return () => ipcRenderer.removeListener('library:blurb', listener)
+  },
+  projectSkills: (projectName: string) => ipcRenderer.invoke('project:skills', projectName),
+  projectSkillSet: (projectName: string, skillName: string, on: boolean) => ipcRenderer.invoke('project:skillSet', projectName, skillName, on),
   updateState: () => ipcRenderer.invoke('update:state'),
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: () => ipcRenderer.invoke('update:download'),

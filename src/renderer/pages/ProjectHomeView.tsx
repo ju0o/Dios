@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { SkillSwitch } from '../../core/skill-board/project-skills'
 import { useScan } from '../stores/scanStore'
 
 type ProjectHomeViewProps = { onNavigate: (view: string) => void }
@@ -15,6 +16,10 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
   const [newProjectName, setNewProjectName] = useState('')
   const [transferMessage, setTransferMessage] = useState('')
   const [todayLine, setTodayLine] = useState('')
+  const [projectSkills, setProjectSkills] = useState<SkillSwitch[]>([])
+  const [skillMatch, setSkillMatch] = useState<{ matched: boolean; message: string } | null>(null)
+  const [skillNote, setSkillNote] = useState('')
+  const [switching, setSwitching] = useState('')
 
   useEffect(() => {
     async function load() {
@@ -52,6 +57,40 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
     }).catch(() => { if (!cancel) setTodayLine('') })
     return () => { cancel = true }
   }, [selectedProjectId, projects])
+
+  useEffect(() => {
+    const name = projects.find((project) => project.id === selectedProjectId)?.name || ''
+    if (!name || typeof api.projectSkills !== 'function') {
+      setProjectSkills([])
+      setSkillMatch(null)
+      return
+    }
+    let cancel = false
+    api.projectSkills(name).then((result: { matched?: boolean; message?: string; skills?: SkillSwitch[] }) => {
+      if (cancel || !result) return
+      setProjectSkills(result.skills || [])
+      setSkillMatch({ matched: Boolean(result.matched), message: result.message || '' })
+      setSkillNote('')
+    }).catch(() => {
+      if (!cancel) setSkillMatch({ matched: false, message: '스킬 목록을 읽지 못했어요. 잠시 뒤에 다시 열어 보세요.' })
+    })
+    return () => { cancel = true }
+  }, [selectedProjectId, projects])
+
+  async function toggleSkill(skill: SkillSwitch) {
+    const name = projects.find((project) => project.id === selectedProjectId)?.name || ''
+    if (!name || typeof api.projectSkillSet !== 'function' || switching) return
+    setSwitching(skill.name)
+    try {
+      const result = await api.projectSkillSet(name, skill.name, !skill.on)
+      setProjectSkills(result?.skills || [])
+      setSkillNote(result?.message || (skill.on ? '뺐어요.' : '붙였어요.'))
+    } catch {
+      setSkillNote('바꾸지 못했어요. 한 번 더 눌러 주세요.')
+    } finally {
+      setSwitching('')
+    }
+  }
 
   const currentPhase = roadmap.find((phase) => phase.status === 'active') || roadmap[0]
   const currentTasks = currentPhase?.tasks || []
@@ -106,6 +145,29 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
       {transferMessage && <div className="notice-line">{transferMessage}</div>}
 
       {projects.length === 0 && <div className="project-create-line"><span>아직 프로젝트가 없어요. 만들면 이 화면이 그 프로젝트의 홈이 돼요.</span><div><input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && createProject()} placeholder="프로젝트 이름" aria-label="프로젝트 이름" /><button onClick={createProject} className="text-link">만들기</button></div></div>}
+
+      {activeProject && typeof api.projectSkills === 'function' && (
+        <section className="project-skill-home" aria-label="이 프로젝트의 스킬">
+          <div className="section-heading"><div><div className="eyebrow">이 프로젝트의 스킬</div><h2>붙은 스킬</h2></div></div>
+          <p className="project-skill-lead">켜 두면 계획·만들기·검사에 이 스킬이 붙어요. 끄면 이 프로젝트에서만 빠지고, 스킬 글은 그대로예요.</p>
+          {skillNote && <p className="notice-line" role="status">{skillNote}</p>}
+          {skillMatch === null && <p className="project-skill-empty">스킬을 불러오고 있어요.</p>}
+          {skillMatch && !skillMatch.matched && <p className="project-skill-empty">{skillMatch.message}</p>}
+          {skillMatch?.matched && projectSkills.length === 0 && <p className="project-skill-empty">이 프로젝트에 붙은 스킬이 없어요.</p>}
+          <ul className="project-skill-rows">
+            {projectSkills.map((skill) => (
+              <li key={skill.name}>
+                <div>
+                  <b>{skill.korean || skill.name}</b>
+                  <small>{skill.on ? '켜 둠' : '꺼 둠'}{skill.on && skill.lanes.length > 0 ? ` · ${skill.lanes.join(' · ')}` : ''}</small>
+                  {skill.korean && <details className="skill-raw"><summary>원문 보기</summary><span>{skill.name}</span></details>}
+                </div>
+                <button type="button" className={skill.on ? 'skill-switch is-on' : 'skill-switch is-off'} aria-pressed={skill.on} disabled={switching === skill.name} onClick={() => void toggleSkill(skill)}>{switching === skill.name ? '바꾸는 중' : skill.on ? '끄기' : '켜기'}</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="hero-grid">
         <div className="hero-orbit glass-surface">

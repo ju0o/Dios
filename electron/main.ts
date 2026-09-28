@@ -8,6 +8,7 @@ import { COPY_FOLDER, REVIEW_FOLDER } from '../src/core/skill-board/skill-export
 import { initDatabase, getDatabase } from './db/schema'
 import { autoUpdater } from 'electron-updater'
 import { explainUpdateError, initialUpdateState, type UpdateState } from '../src/core/update/update-copy'
+import { BLURB_START_MS, createBlurbQueue, pendingBlurbNames, type BlurbProgress } from '../src/core/skill-library/blurb-queue'
 
 let mainWindow: BrowserWindow | null = null
 let databasePath = ''
@@ -103,6 +104,7 @@ app.whenReady().then(() => {
   startDriftWatch()
   startWorkWatch()
   startUpdateWatch()
+  startBlurbWatch()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -216,6 +218,38 @@ ipcMain.handle('update:install', () => {
 function startUpdateWatch(): void {
   if (!app.isPackaged) return
   setTimeout(() => { void checkForUpdate(true) }, 90_000)
+}
+
+let blurbChain: Promise<unknown> = Promise.resolve()
+let blurbQueue: ReturnType<typeof createBlurbQueue> | null = null
+
+/** One Korean sentence at a time, so a button press and the background pass never overlap. */
+function translateOne(name: string): Promise<{ ok: boolean; message: string; korean: string }> {
+  const job = blurbChain.then(async () => {
+    const { translateCard } = await import('../src/core/skill-library/library-service')
+    return translateCard(String(name || ''), connectedSkillRoots())
+  })
+  blurbChain = job.then(() => undefined, () => undefined)
+  return job
+}
+
+function broadcastBlurb(progress: BlurbProgress): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('library:blurb', progress)
+  }
+}
+
+/** Prepare missing Korean sentences slowly after the app is open. A press of 멈추기 ends the pass. */
+function startBlurbWatch(): void {
+  blurbQueue = createBlurbQueue({
+    listPending: async () => {
+      const { listLibrary } = await import('../src/core/skill-library/library-service')
+      return pendingBlurbNames(listLibrary(connectedSkillRoots()).skills)
+    },
+    translate: translateOne,
+  })
+  blurbQueue.subscribe(broadcastBlurb)
+  setTimeout(() => blurbQueue?.start(), BLURB_START_MS)
 }
 
 const notified = new Set<string>()
@@ -689,9 +723,27 @@ ipcMain.handle('library:take', async (_event, placeId: string, name: string) => 
   return result
 })
 
-ipcMain.handle('library:blurb', async (_event, name: string) => {
-  const { translateCard } = await import('../src/core/skill-library/library-service')
-  return translateCard(String(name || ''), connectedSkillRoots())
+ipcMain.handle('library:blurb', async (_event, name: string) => translateOne(name))
+
+ipcMain.handle('library:blurbState', () => blurbQueue?.state() ?? { phase: 'idle', done: 0, total: 0, name: '', korean: '', message: '' })
+
+ipcMain.handle('library:blurbPause', () => {
+  blurbQueue?.pause()
+  return blurbQueue?.state() ?? { phase: 'paused', done: 0, total: 0, name: '', korean: '', message: '한글 설명을 멈췄어요.' }
+})
+
+ipcMain.handle('project:skills', async (_event, projectName: string) => {
+  const { listProjectSkills } = await import('../src/core/skill-board/project-skill-switch')
+  return listProjectSkills(os.homedir(), String(projectName || ''))
+})
+
+ipcMain.handle('project:skillSet', async (_event, projectName: string, skillName: string, on: boolean) => {
+  const { setProjectSkill } = await import('../src/core/skill-board/project-skill-switch')
+  const result = setProjectSkill(os.homedir(), String(projectName || ''), String(skillName || ''), Boolean(on))
+  if (result.matched && (result.message.includes('붙였어요') || result.message.includes('뺐어요'))) {
+    recordActivity('skill', on ? '프로젝트에 스킬 붙이기' : '프로젝트에서 스킬 빼기', String(skillName || ''))
+  }
+  return result
 })
 
 ipcMain.handle('library:gather', async () => {

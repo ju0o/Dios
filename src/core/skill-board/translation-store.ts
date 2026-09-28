@@ -119,6 +119,20 @@ function blurbFile(home: string): string {
   return path.join(home, '.local', 'share', 'dios', 'skill-blurbs.json')
 }
 
+/** Saved Korean sentences by skill name, even if the English text has changed since. */
+export function blurbSentences(home: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(blurbFile(home), 'utf8')) as BlurbFile
+    for (const [name, entry] of Object.entries(parsed.skills ?? {})) {
+      if (entry?.text && summaryOk(entry.text)) out[name] = entry.text
+    }
+  } catch {
+    // No sentences yet.
+  }
+  return out
+}
+
 /** The one Korean sentence for a skill card, when it still matches this skill text. */
 export function readBlurb(home: string, name: string, print: string): string {
   if (!print) return ''

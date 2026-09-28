@@ -105,3 +105,97 @@ export function presentProjects(raw: RawProjectSkills[]): ProjectSkills[] {
 export function projectsUsingSkill(projects: ProjectSkills[], skillName: string): string[] {
   return projects.filter((project) => project.skills.some((skill) => skill.name === skillName)).map((project) => project.label)
 }
+
+/** One skill on the project home, on or remembered as off. */
+export interface SkillSwitch {
+  name: string
+  /** Korean lane names while it is on. Empty when it is off. */
+  lanes: string[]
+  on: boolean
+  /** One Korean sentence, when one is already saved. */
+  korean: string
+}
+
+/** The Agent Relay project whose id or display name matches this project, even if every skill is off. */
+export function matchPortfolioId(portfolio: { projects?: Array<{ id?: unknown }> }, projectName: string): string {
+  const trimmed = projectName.trim()
+  if (!trimmed) return ''
+  const projects = (portfolio.projects ?? []).filter((item): item is { id: string } => typeof item?.id === 'string' && SAFE_NAME.test(item.id))
+  const slug = trimmed.toLowerCase().replace(/\s+/g, '-')
+  const found = projects.find((project) => project.id === slug)
+    ?? projects.find((project) => projectLabel(project.id).toLowerCase() === trimmed.toLowerCase())
+  return found?.id ?? ''
+}
+
+/** The Agent Relay project whose id or display name matches this project. */
+export function matchRelayProject(projects: RawProjectSkills[], projectName: string): RawProjectSkills | null {
+  const trimmed = projectName.trim()
+  if (!trimmed) return null
+  const slug = trimmed.toLowerCase().replace(/\s+/g, '-')
+  return projects.find((project) => project.id === slug)
+    ?? projects.find((project) => projectLabel(project.id).toLowerCase() === trimmed.toLowerCase())
+    ?? null
+}
+
+/** Skills that are on, plus ones the Founder turned off so they can come back. */
+export function switchesFor(project: RawProjectSkills | null, off: string[], korean: Record<string, string> = {}): SkillSwitch[] {
+  const shown = project ? presentProjects([project])[0] : undefined
+  const onNames = new Set((shown?.skills ?? []).map((skill) => skill.name))
+  const rows: SkillSwitch[] = (shown?.skills ?? []).map((skill) => ({
+    name: skill.name,
+    lanes: skill.lanes,
+    on: true,
+    korean: korean[skill.name] || '',
+  }))
+  for (const name of off) {
+    if (!SAFE_NAME.test(name) || onNames.has(name)) continue
+    rows.push({ name, lanes: [], on: false, korean: korean[name] || '' })
+  }
+  return rows.sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/**
+ * Add a skill to one project's three lanes, or take it off every lane of that project.
+ * Other projects and other fields stay as they are. Returns how many lane lists changed.
+ */
+export function applyProjectSkill(
+  portfolio: { projects?: Array<{ id?: unknown; skills?: Record<string, unknown> }> },
+  projectId: string,
+  skillName: string,
+  on: boolean,
+): number {
+  if (!SAFE_NAME.test(skillName)) return 0
+  const project = (portfolio.projects ?? []).find((item) => item?.id === projectId)
+  if (!project) return 0
+  if (!project.skills || typeof project.skills !== 'object') project.skills = {}
+  let touched = 0
+  if (on) {
+    for (const [lane] of LANES) {
+      const names = stringList(project.skills[lane])
+      if (!names || names.includes(skillName)) continue
+      names.push(skillName)
+      project.skills[lane] = names
+      touched += 1
+    }
+    return touched
+  }
+  for (const lane of Object.keys(project.skills)) {
+    const names = stringList(project.skills[lane])
+    if (!names || !names.includes(skillName)) continue
+    project.skills[lane] = names.filter((item) => item !== skillName)
+    touched += 1
+  }
+  return touched
+}
+
+/** The line under the switch, right after it changes. */
+export function switchMessage(label: string, on: boolean, touched: number): string {
+  if (on) return touched ? `${label}에 붙였어요.` : `${label}에 이미 붙어 있어요.`
+  return touched ? `${label}에서 뺐어요. 스킬 글은 그대로예요.` : `${label}에는 이미 없어요.`
+}
+
+function stringList(value: unknown): string[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return null
+  return value.slice()
+}

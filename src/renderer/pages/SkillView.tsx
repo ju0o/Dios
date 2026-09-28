@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LibrarySkill } from '../../core/skill-library/catalog'
 import type { FetchOutcome, SkillCandidate } from '../../core/skill-library/fetch-skill'
+import { blurbStatusLine, type BlurbProgress } from '../../core/skill-library/blurb-queue'
 import type { LibraryListing, LibraryResult, RemoteSkill } from '../../core/skill-library/library-service'
 import { whenText } from './skill-board-api'
 import { OPEN_KEY } from './SkillBoardView'
@@ -16,6 +17,9 @@ interface LibraryApi {
   libraryTake: (placeId: string, name: string) => Promise<LibraryResult>
   libraryGather: () => Promise<LibraryResult>
   libraryBlurb: (name: string) => Promise<{ ok: boolean; message: string; korean: string }>
+  libraryBlurbState?: () => Promise<BlurbProgress>
+  libraryBlurbPause?: () => Promise<BlurbProgress>
+  onLibraryBlurb?: (callback: (progress: BlurbProgress) => void) => () => void
   libraryOpenFolder: (folder: string) => Promise<{ ok: boolean; message: string }>
 }
 
@@ -71,6 +75,7 @@ export function SkillView({ onNavigate }: SkillViewProps) {
   const [attachFor, setAttachFor] = useState('')
   const [pickedAgents, setPickedAgents] = useState<string[]>([])
   const [koreanProgress, setKoreanProgress] = useState<{ done: number; total: number } | null>(null)
+  const [blurb, setBlurb] = useState<BlurbProgress | null>(null)
   const stopKorean = useRef(false)
 
   async function load() {
@@ -89,6 +94,17 @@ export function SkillView({ onNavigate }: SkillViewProps) {
 
   useEffect(() => {
     void load()
+    const api = libraryApi()
+    if (!api?.onLibraryBlurb) return
+    void api.libraryBlurbState?.().then((progress) => { if (progress) setBlurb(progress) })
+    return api.onLibraryBlurb((progress) => {
+      setBlurb(progress)
+      if (progress.korean && progress.name) {
+        setListing((current) => current
+          ? { ...current, skills: current.skills.map((item) => item.name === progress.name ? { ...item, korean: progress.korean } : item) }
+          : current)
+      }
+    })
   }, [])
 
   useEffect(() => {
@@ -139,6 +155,7 @@ export function SkillView({ onNavigate }: SkillViewProps) {
   async function makeKorean() {
     const api = libraryApi()
     if (!api || !listing) return
+    await api.libraryBlurbPause?.()
     const todo = listing.skills.filter((skill) => !skill.korean)
     if (!todo.length) return
     stopKorean.current = false
@@ -286,13 +303,14 @@ export function SkillView({ onNavigate }: SkillViewProps) {
             {skills.length ? `이 컴퓨터에 스킬 ${skills.length}개가 있어요.${newCount ? ` 이번 주에 ${newCount}개가 새로 생겼어요.` : ''}` : '아직 스킬이 없어요. 아래에서 첫 스킬을 받아 보세요.'}
           </p>
           <p className="skill-quiet">Claude, Codex, Cursor 같은 에이전트 폴더와 공용 폴더를 모두 모아 보여 줘요. 받은 스킬은 준비된 에이전트에 바로 붙어요.</p>
+          {blurb && blurbStatusLine(blurb) && <p className="skill-quiet blurb-line" role="status">{blurbStatusLine(blurb)}</p>}
         </div>
         <div className="skill-toolbar">
           <button type="button" className="skill-action is-primary" onClick={() => setAddMode(addMode === 'address' ? 'none' : 'address')} aria-expanded={addMode === 'address'}>주소로 받기</button>
           <button type="button" className="skill-action" onClick={() => void pickFolder()} disabled={busy}>폴더에서 추가</button>
           {gatherCount > 0 && <button type="button" className="skill-action is-primary" onClick={() => void gather()} disabled={busy}>한 곳에만 있는 {gatherCount}개 모으기</button>}
-          {skills.some((skill) => !skill.korean) && !koreanProgress && <button type="button" className="skill-action" onClick={() => void makeKorean()} disabled={busy}>한글 설명 만들기</button>}
-          {koreanProgress && <button type="button" className="skill-action" onClick={() => { stopKorean.current = true }}>한글 설명 멈추기 · {koreanProgress.done}/{koreanProgress.total}</button>}
+          {skills.some((skill) => !skill.korean) && !koreanProgress && blurb?.phase !== 'working' && <button type="button" className="skill-action" onClick={() => void makeKorean()} disabled={busy}>한글 설명 지금 만들기</button>}
+          {(koreanProgress || blurb?.phase === 'working') && <button type="button" className="skill-action" onClick={() => { stopKorean.current = true; void libraryApi()?.libraryBlurbPause?.() }}>한글 설명 멈추기 · {koreanProgress ? `${koreanProgress.done}/${koreanProgress.total}` : `${blurb?.done ?? 0}/${blurb?.total ?? 0}`}</button>}
           <button type="button" className="skill-action" onClick={() => void openRemotes()} aria-expanded={addMode === 'remote'}>다른 컴퓨터에서</button>
           <button type="button" className="skill-action" onClick={() => void load()} disabled={busy}>다시 읽기</button>
         </div>
