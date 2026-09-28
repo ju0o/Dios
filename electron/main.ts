@@ -6,6 +6,8 @@ import crypto from 'crypto'
 import { runQuiet, setQuietHost } from '../src/core/skill-board/quiet-process'
 import { COPY_FOLDER, REVIEW_FOLDER } from '../src/core/skill-board/skill-export'
 import { initDatabase, getDatabase } from './db/schema'
+import { autoUpdater } from 'electron-updater'
+import { explainUpdateError, initialUpdateState, type UpdateState } from '../src/core/update/update-copy'
 
 let mainWindow: BrowserWindow | null = null
 let databasePath = ''
@@ -100,6 +102,7 @@ app.whenReady().then(() => {
   createWindow()
   startDriftWatch()
   startWorkWatch()
+  startUpdateWatch()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -143,6 +146,76 @@ async function publishUsageAlerts(): Promise<void> {
   } catch {
     // No cache yet means no badge.
   }
+}
+
+// ═══════════════════════════════════════════
+// 업데이트: GitHub Releases. Checked on the button, and once quietly after start.
+// ═══════════════════════════════════════════
+let updateState: UpdateState = initialUpdateState(app.getVersion(), app.isPackaged)
+let updaterWired = false
+
+function pushUpdate(next: Partial<UpdateState>): void {
+  updateState = { ...updateState, ...next }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('update:state', updateState)
+  }
+}
+
+function wireUpdater(): void {
+  if (updaterWired) return
+  updaterWired = true
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('checking-for-update', () => pushUpdate({ phase: 'checking', detail: '' }))
+  autoUpdater.on('update-not-available', () => pushUpdate({ phase: 'none', next: '', percent: 0 }))
+  autoUpdater.on('update-available', (info) => pushUpdate({ phase: 'available', next: info.version, percent: 0 }))
+  autoUpdater.on('download-progress', (progress) => pushUpdate({ phase: 'downloading', percent: progress.percent }))
+  autoUpdater.on('update-downloaded', (info) => {
+    pushUpdate({ phase: 'ready', next: info.version, percent: 100 })
+    notifyOnce('update-ready', `DIOS ${info.version} 준비됐어요.`, '왼쪽 아래 버튼을 누르면 다시 시작하면서 적용돼요.', 'settings')
+  })
+  autoUpdater.on('error', (error) => {
+    const message = error instanceof Error ? error.message : String(error)
+    pushUpdate({ phase: 'error', detail: explainUpdateError(message) + `\n${message}` })
+  })
+}
+
+async function checkForUpdate(quiet: boolean): Promise<UpdateState> {
+  if (!app.isPackaged) return updateState
+  wireUpdater()
+  try {
+    await autoUpdater.checkForUpdates()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (quiet) pushUpdate({ phase: 'idle', detail: '' })
+    else pushUpdate({ phase: 'error', detail: explainUpdateError(message) + `\n${message}` })
+  }
+  return updateState
+}
+
+ipcMain.handle('update:state', () => updateState)
+ipcMain.handle('update:check', () => checkForUpdate(false))
+ipcMain.handle('update:download', async () => {
+  if (!app.isPackaged || updateState.phase !== 'available') return updateState
+  wireUpdater()
+  try {
+    pushUpdate({ phase: 'downloading', percent: 0 })
+    await autoUpdater.downloadUpdate()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    pushUpdate({ phase: 'error', detail: explainUpdateError(message) + `\n${message}` })
+  }
+  return updateState
+})
+ipcMain.handle('update:install', () => {
+  if (updateState.phase !== 'ready') return updateState
+  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  return updateState
+})
+
+function startUpdateWatch(): void {
+  if (!app.isPackaged) return
+  setTimeout(() => { void checkForUpdate(true) }, 90_000)
 }
 
 const notified = new Set<string>()

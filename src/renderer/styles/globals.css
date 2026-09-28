@@ -297,6 +297,15 @@ body {
 .welcome-panel h1 { margin: 0; font-size: 28px; line-height: 1.4; }
 .welcome-next { margin: 0; font-size: 17px; line-height: 1.55; color: rgba(255,255,255,.82); }
 .today-line { margin: 10px 0 0; font-size: 16px; line-height: 1.5; color: #99f6e4; }
+.update-slot { display: flex; flex-direction: column; gap: 4px; }
+.update-button:disabled { opacity: .7; cursor: default; }
+.update-button.is-watch { color: #fcd34d; }
+.update-button.is-watch span { color: #f59e0b; }
+.update-button.is-ok { color: #99f6e4; }
+.update-progress { width: 100%; height: 6px; accent-color: #f59e0b; }
+.update-reason { font-size: 13px; color: rgba(255,255,255,.72); padding: 0 12px; }
+.update-reason summary { cursor: pointer; }
+.update-reason pre { white-space: pre-wrap; word-break: break-all; font-size: 11px; opacity: .7; }
 .usage-projects { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .usage-projects li { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .usage-project-name { flex: 1 1 160px; font-size: 15px; }

@@ -135,6 +135,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   libraryTake: (placeId: string, name: string) => ipcRenderer.invoke('library:take', placeId, name),
   libraryGather: () => ipcRenderer.invoke('library:gather'),
   libraryBlurb: (name: string) => ipcRenderer.invoke('library:blurb', name),
+  updateState: () => ipcRenderer.invoke('update:state'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateDownload: () => ipcRenderer.invoke('update:download'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (callback: (state: unknown) => void) => {
+    const listener = (_event: unknown, state: unknown) => callback(state)
+    ipcRenderer.on('update:state', listener)
+    return () => ipcRenderer.removeListener('update:state', listener)
+  },
   onAppOpen: (callback: (view: string) => void) => {
     const listener = (_event: unknown, view: string) => callback(view)
     ipcRenderer.on('app:open', listener)

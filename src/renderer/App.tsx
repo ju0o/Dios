@@ -28,6 +28,7 @@ import { ExperimentView } from './pages/ExperimentView'
 import { HumanGateView } from './pages/HumanGateView'
 import { AgentMonitorView } from './pages/AgentMonitorView'
 import { WelcomeView } from './pages/WelcomeView'
+import { UpdateButton } from './components/UpdateButton'
 import type { StartLook } from '../core/start/welcome'
 import { CommandPalette } from './components/CommandPalette'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
@@ -170,7 +171,7 @@ export default function App() {
               <button type="button" onClick={() => setMoreOpen((open) => !open)} className="sidebar-link"><span>▾</span>{moreOpen ? '접기' : '이전 화면'}<i>›</i></button>
               {moreOpen && moreNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}<i>›</i></button>)}
             </nav>
-            <div className="sidebar-footer"><button onClick={() => navigate('operations')} className="sidebar-link"><span>◎</span>연동 관리<i>›</i></button><button onClick={() => navigate('settings')} className="sidebar-link"><span>⚙</span>설정<i>›</i></button><div className="local-badge"><span /> 이 컴퓨터만</div></div>
+            <div className="sidebar-footer"><button onClick={() => navigate('operations')} className="sidebar-link"><span>◎</span>연동 관리<i>›</i></button><button onClick={() => navigate('settings')} className="sidebar-link"><span>⚙</span>설정<i>›</i></button><UpdateButton /><div className="local-badge"><span /> 이 컴퓨터만</div></div>
           </aside>
           <main className="app-main">
             <div className="topbar"><div className="breadcrumb"><span>DIOS</span><b>/</b><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || '스킬 보드'}</strong></div><div className="topbar-actions"><button onClick={() => navigate('skillBoard')} className="topbar-button">스킬 보드</button><span className="online-dot" /> 이 컴퓨터에서만</div></div>

@@ -12,10 +12,16 @@ asarUnpack:
   - node_modules/better-sqlite3/**
 win:
   target: nsis
-  artifactName: DIOS-설치.${ext}
+  # ASCII name so the GitHub release asset and latest.yml agree on every computer.
+  artifactName: DIOS-Setup.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   installerLanguages:
     - ko_KR
   language: 1042
+publish:
+  provider: github
+  owner: ju0o
+  repo: Dios
+  releaseType: release
