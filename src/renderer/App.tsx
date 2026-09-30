@@ -133,7 +133,7 @@ export default function App() {
       case 'apiKeys': return <ApiKeysView />
       case 'home': return <ProjectHomeView onNavigate={navigate} />
       case 'project-data': return <ProjectConnectionsView onNavigate={navigate} />
-      case 'changes': return <ChangesView />
+      case 'changes': return <ChangesView onNavigate={navigate} />
       case 'maintenance': return <MaintenanceView />
       case 'backups': return <BackupView />
       case 'environment': return <EnvironmentView />
@@ -149,7 +149,7 @@ export default function App() {
       case 'dashboard': return <Dashboard />
       case 'timeline': return <TimelineView />
       case 'aiResources': return <AIResourceView />
-      case 'agentMonitor': return <AgentMonitorView />
+      case 'agentMonitor': return <AgentMonitorView onNavigate={navigate} />
       case 'decisions': return <DecisionView />
       case 'experiments': return <ExperimentView />
       case 'humanGates': return <HumanGateView />

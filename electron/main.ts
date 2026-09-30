@@ -749,8 +749,15 @@ ipcMain.handle('project:skillSet', async (_event, projectName: string, skillName
   const { setProjectSkill } = await import('../src/core/skill-board/project-skill-switch')
   const result = setProjectSkill(os.homedir(), String(projectName || ''), String(skillName || ''), Boolean(on), connectedSkillRoots())
   if (result.matched && (result.message.includes('붙였어요') || result.message.includes('뺐어요'))) {
-    recordActivity('skill', on ? '프로젝트에 스킬 붙이기' : '프로젝트에서 스킬 빼기', String(skillName || ''))
+    recordActivity('skill', on ? '프로젝트에 스킬 붙이기' : '프로젝트에서 스킬 빼기', `${result.label} · ${String(skillName || '')}`)
   }
+  return result
+})
+
+ipcMain.handle('project:skillPack', async (_event, projectName: string) => {
+  const { saveProjectSkillPack } = await import('../src/core/skill-board/project-skill-switch')
+  const result = saveProjectSkillPack(os.homedir(), String(projectName || ''), app.getPath('desktop'), connectedSkillRoots())
+  if (result.ok) recordActivity('skill', '프로젝트 스킬 글 바탕화면에 저장', String(projectName || ''))
   return result
 })
 
@@ -923,14 +930,24 @@ ipcMain.handle('skillBoard:get', async (_event, placeId: string) => {
   return boardFor(String(placeId || 'local'))
 })
 
+/** "Claude" for an agent id, so the change list reads like the board. */
+async function agentTitle(agentId: string): Promise<string> {
+  const { LIBRARY_AGENTS } = await import('../src/core/skill-library/catalog')
+  return LIBRARY_AGENTS.find((agent) => agent.id === agentId)?.name ?? agentId
+}
+
 ipcMain.handle('skillBoard:link', async (_event, placeId: string, agentId: string, skillName: string) => {
   const { linkAt } = await import('../src/core/skill-board/board-service')
-  return linkAt(String(placeId || 'local'), String(agentId), String(skillName))
+  const result = await linkAt(String(placeId || 'local'), String(agentId), String(skillName))
+  if (result.ok) recordActivity('skill', '에이전트에 스킬 붙이기', `${await agentTitle(String(agentId))} · ${String(skillName)}`)
+  return result
 })
 
 ipcMain.handle('skillBoard:unlink', async (_event, placeId: string, agentId: string, skillName: string) => {
   const { unlinkAt } = await import('../src/core/skill-board/board-service')
-  return unlinkAt(String(placeId || 'local'), String(agentId), String(skillName))
+  const result = await unlinkAt(String(placeId || 'local'), String(agentId), String(skillName))
+  if (result.ok) recordActivity('skill', '에이전트에서 스킬 빼기', `${await agentTitle(String(agentId))} · ${String(skillName)}`)
+  return result
 })
 
 ipcMain.handle('skillBoard:ack', async (_event, placeId: string, skillName: string) => {

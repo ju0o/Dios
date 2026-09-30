@@ -63,6 +63,9 @@ describe('founder work cards', () => {
     expect(card.gateId).toBe('HG-20260928-62ecab')
     expect(card.commands).toEqual([])
     expect(card.sayToAside).toBe('Aside에게 "댓글 리포트 탭 재확인 해 줘"라고 말하면 돼요.')
+    expect(card.prompt).toContain('## 이렇게 진행해')
+    expect(card.prompt).toContain('gateId: HG-20260928-62ecab')
+    expect(card.prompt.startsWith('# 요청:')).toBe(true)
   })
 
   it('reads a Founder task with its command and success line', () => {
@@ -70,6 +73,7 @@ describe('founder work cards', () => {
     expect(card.title).toBe('ASUS 워커 기동 후 재검증')
     expect(card.summary).toContain('초안')
     expect(card.sayToAside).toBe('')
+    expect(card.prompt).toContain('## 붙여 넣을 명령')
     expect(card.steps[0]).toContain('ASUS')
     expect(card.commands).toEqual(['agent-relay portfolio founder-response FG-80bd APPROVE'])
     expect(card.success).toContain('RECORDED')

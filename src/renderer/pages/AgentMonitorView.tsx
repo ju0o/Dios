@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { count, dollars, tokens, type UsageCard, type UsageScreen } from '../../core/agent-monitor/usage-summary'
 import { WeekBars } from '../components/WeekBars'
+import { OPEN_PROJECT_KEY, canOpenProject } from '../../core/project-home/open-project'
 import { whenText } from './skill-board-api'
+
+interface AgentMonitorViewProps {
+  /** Opens another screen. Project names become links to the project home when this is given. */
+  onNavigate?: (view: string) => void
+}
 
 interface CapResult {
   ok: boolean
@@ -51,7 +57,7 @@ function progressLine(progress: Progress | null): string {
  * How much the AI tools cost this month, read from the agents' own logs when this screen opens.
  * Nothing runs in the background; the Founder sees numbers, not files.
  */
-export function AgentMonitorView() {
+export function AgentMonitorView({ onNavigate }: AgentMonitorViewProps = {}) {
   const [screen, setScreen] = useState<UsageScreen | null>(null)
   const [failed, setFailed] = useState('')
   const [notice, setNotice] = useState('')
@@ -116,6 +122,28 @@ export function AgentMonitorView() {
     if (!api) return
     const result = await api.usageOpenLink(url)
     if (!result.ok) setNotice(result.message)
+  }
+
+  /** Leave the name for the home screen, then go there. */
+  function openProject(name: string) {
+    if (!onNavigate) return
+    try {
+      localStorage.setItem(OPEN_PROJECT_KEY, name)
+    } catch {
+      // Without storage the home screen simply opens on its last project.
+    }
+    onNavigate('home')
+  }
+
+  const linkable = (name: string) => Boolean(onNavigate) && canOpenProject(name)
+
+  function projectName(name: string, className: string) {
+    if (!linkable(name)) return <span className={className}>{name}</span>
+    return (
+      <button type="button" className={`skill-link usage-project-link ${className}`} onClick={() => openProject(name)} aria-label={`${name} 프로젝트 홈 열기`}>
+        {name} <i aria-hidden="true">›</i>
+      </button>
+    )
   }
 
   if (screen === null && !failed) {
@@ -183,12 +211,12 @@ export function AgentMonitorView() {
         <section className="skill-card work-card" aria-label="이번 주 프로젝트별">
           <header className="key-group-head">
             <h3>이번 주 프로젝트별</h3>
-            <small>막대 높이는 모든 프로젝트가 같은 기준이에요</small>
+            <small>{onNavigate ? '이름을 누르면 그 프로젝트 홈으로 가요 · 막대 높이는 모든 프로젝트가 같은 기준이에요' : '막대 높이는 모든 프로젝트가 같은 기준이에요'}</small>
           </header>
           <div className="week-projects">
             {screen.weekProjects.map((row) => (
               <div key={row.name} className="week-project">
-                <h4>{row.name}</h4>
+                <h4>{projectName(row.name, '')}</h4>
                 <WeekBars graph={row.graph} peak={Math.max(...screen.weekProjects.map((item) => item.graph.peak))} compact />
                 <p className="week-sentence">{row.graph.sentence.replace(/^이번 주 .*?에서 /, '')}</p>
               </div>
@@ -211,7 +239,7 @@ export function AgentMonitorView() {
           <ul className="usage-projects">
             {screen.projects.map((project) => (
               <li key={project.name}>
-                <span className="usage-project-name">{project.name}</span>
+                {projectName(project.name, 'usage-project-name')}
                 <span className="usage-project-tools">{project.tools.join(' · ')}</span>
                 <b>{dollars(project.month)}</b>
               </li>
@@ -227,7 +255,7 @@ export function AgentMonitorView() {
             )}
             {othersOpen && screen.otherProjects.map((project) => (
               <li key={project.name} className="usage-project-other">
-                <span className="usage-project-name">{project.name}</span>
+                {projectName(project.name, 'usage-project-name')}
                 <span className="usage-project-tools">{project.tools.join(' · ')}</span>
                 <b>{dollars(project.month)}</b>
               </li>

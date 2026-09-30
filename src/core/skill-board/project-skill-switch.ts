@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { readLibrary } from '../skill-library/catalog'
+import { PROJECT_FOLDER, projectFolderName, projectPackMessage, writeProjectBundle, type ExportSkill } from './skill-export'
 import { blurbSentences } from './translation-store'
 import {
   applyProjectSkill,
@@ -137,6 +138,67 @@ export function listProjectSkills(home: string, projectName: string, extraRoots:
     skills,
     available: availableSkills(home, skills, extraRoots),
   }
+}
+
+/** Result of writing one project's skill notes onto the desktop. */
+export interface ProjectPack {
+  ok: boolean
+  message: string
+  /** Folder that was written. Empty when nothing was. Only for 원문 보기. */
+  folder: string
+}
+
+/**
+ * Write the skills that are on for this project onto the desktop, one note each plus a sheet for Aside.
+ * The Founder hands that folder to Aside or ChatGPT; DIOS itself calls no paid model.
+ */
+export function saveProjectSkillPack(home: string, projectName: string, desktop: string, extraRoots: string[] = []): ProjectPack {
+  const listed = listProjectSkills(home, projectName, extraRoots)
+  if (!listed.matched) return { ok: false, message: listed.message || '이 이름과 같은 프로젝트가 없어요.', folder: '' }
+  const on = listed.skills.filter((skill) => skill.on)
+  if (!on.length) return { ok: false, message: projectPackMessage(listed.label, 0, 0), folder: '' }
+  const library = new Map(readLibrary(home, extraRoots).map((skill) => [skill.name, skill]))
+  const notes: ExportSkill[] = []
+  let missing = 0
+  for (const skill of on) {
+    const text = skillText(home, skill.name, library.get(skill.name)?.homes.map((item) => item.path) ?? [])
+    if (!text) {
+      missing += 1
+      continue
+    }
+    notes.push({
+      name: skill.name,
+      summary: library.get(skill.name)?.summary ?? '',
+      korean: skill.korean,
+      agentNames: [],
+      lanes: skill.lanes,
+      text,
+    })
+  }
+  if (!notes.length) return { ok: false, message: `${listed.label}에 켜 둔 스킬 글을 하나도 찾지 못했어요. 스킬 라이브러리에서 그 스킬이 있는지 봐 주세요.`, folder: '' }
+  const root = path.resolve(desktop, PROJECT_FOLDER)
+  const folder = path.resolve(root, projectFolderName(listed.label))
+  if (!folder.startsWith(`${root}${path.sep}`)) return { ok: false, message: '폴더 이름을 만들지 못했어요.', folder: '' }
+  try {
+    writeProjectBundle(folder, listed.label, notes)
+    return { ok: true, message: projectPackMessage(listed.label, notes.length, missing), folder }
+  } catch {
+    return { ok: false, message: '바탕화면에 저장하지 못했어요. 다시 시도해 주세요.', folder: '' }
+  }
+}
+
+/** SKILL.md from the shared folder first, then from any other copy this computer has. */
+function skillText(home: string, name: string, otherDirs: string[]): string {
+  const dirs = [path.join(home, '.agents', 'skills', name), ...otherDirs]
+  for (const dir of dirs) {
+    try {
+      const text = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+      if (text.trim()) return text
+    } catch {
+      // Try the next copy.
+    }
+  }
+  return ''
 }
 
 /**

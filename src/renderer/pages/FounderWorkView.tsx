@@ -254,10 +254,14 @@ function TaskCard({ task, fresh, onCopy, onDismiss, onFinish }: TaskCardProps) {
       )}
       {task.success && <p className="skill-quiet">잘 되면: {task.success}</p>}
       {isAside && <p className="work-say"><b>{task.sayToAside}</b></p>}
+      {isAside && <p className="skill-quiet">버튼을 누르면 Aside 창에 붙여 넣을 글 전체가 복사돼요.</p>}
 
       <div className="skill-toolbar">
         {isAside && (
-          <button type="button" className="skill-action primary" onClick={() => onCopy(task.sayToAside, 'Aside에게 할 말을')}>Aside에게 할 말 복사</button>
+          <button type="button" className="skill-action primary" disabled={!task.prompt} onClick={() => onCopy(task.prompt, 'Aside에게 줄 글을')}>Aside에게 줄 글 복사</button>
+        )}
+        {!isAside && task.prompt && (
+          <button type="button" className="skill-action" onClick={() => onCopy(task.prompt, '안내 글을')}>안내 글 복사</button>
         )}
         <button type="button" className={`skill-action ${isAside ? '' : 'primary'}`} onClick={() => setWriting((open) => !open)}>
           {isAside ? 'Aside 결과 붙여 넣기' : '끝났어요'}

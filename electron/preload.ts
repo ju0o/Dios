@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   projectRelayList: () => ipcRenderer.invoke('project:relayList'),
   projectSkills: (projectName: string) => ipcRenderer.invoke('project:skills', projectName),
   projectSkillSet: (projectName: string, skillName: string, on: boolean) => ipcRenderer.invoke('project:skillSet', projectName, skillName, on),
+  projectSkillPack: (projectName: string) => ipcRenderer.invoke('project:skillPack', projectName),
   updateState: () => ipcRenderer.invoke('update:state'),
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateDownload: () => ipcRenderer.invoke('update:download'),

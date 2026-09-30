@@ -12,8 +12,10 @@ export interface OpenTask {
   commands: string[]
   /** What the screen shows when it worked. */
   success: string
-  /** Sentence to say to Aside. Empty for Founder tasks. */
+  /** Sentence to say to Aside. Empty for Founder tasks. The copy button uses `prompt`, not this line. */
   sayToAside: string
+  /** The gate file itself, so a copy button can paste the whole prompt. */
+  prompt: string
   /** Relay id such as HG-20260928-62ecab, kept for the relay script. Never shown on the card. */
   gateId: string
   fileName: string
@@ -56,6 +58,7 @@ export function parseGate(text: string, kind: 'aside' | 'founder', fileName: str
     commands: commandsIn(clean),
     success: sectionBody(clean, ['이렇게 나오면 성공']),
     sayToAside: kind === 'aside' ? `Aside에게 "${title} 해 줘"라고 말하면 돼요.` : '',
+    prompt: clean.trim(),
     gateId: clean.match(GATE_ID)?.[1] ?? '',
     fileName,
     updatedAt,

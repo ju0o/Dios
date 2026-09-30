@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { WeekGraph } from '../../core/agent-monitor/usage-summary'
 import type { SkillSwitch } from '../../core/skill-board/project-skills'
-import type { RelayProject, SkillPick } from '../../core/skill-board/project-skill-switch'
+import type { ProjectPack, RelayProject, SkillPick } from '../../core/skill-board/project-skill-switch'
+import { OPEN_PROJECT_KEY, openProjectMessage, projectIdForName } from '../../core/project-home/open-project'
 import { WeekBars } from '../components/WeekBars'
 import { useScan } from '../stores/scanStore'
+
+/** The project name the usage screen asked to open, taken once so a reload does not repeat it. */
+function takeWantedProject(): string {
+  try {
+    const name = localStorage.getItem(OPEN_PROJECT_KEY) || ''
+    if (name) localStorage.removeItem(OPEN_PROJECT_KEY)
+    return name
+  } catch {
+    return ''
+  }
+}
 
 type ProjectHomeViewProps = { onNavigate: (view: string) => void }
 
@@ -29,6 +41,9 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
   const [week, setWeek] = useState<WeekGraph | null>(null)
   const [relayProjects, setRelayProjects] = useState<RelayProject[]>([])
   const [creating, setCreating] = useState('')
+  const [wantedName, setWantedName] = useState('')
+  const [packing, setPacking] = useState(false)
+  const [packFolder, setPackFolder] = useState('')
 
   useEffect(() => {
     if (typeof api.projectRelayList !== 'function') return
@@ -43,6 +58,21 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
     return relayProjects.filter((relay) => !have.has(relay.label.toLowerCase()) && !have.has(relay.id.toLowerCase()))
   }, [relayProjects, projects])
 
+  // Arrived from the usage screen: open that project, or say it has no home yet.
+  useEffect(() => {
+    if (!wantedName || (!projects.length && !relayProjects.length)) return
+    const id = projectIdForName(projects, wantedName)
+    if (id) {
+      setSelectedProjectId(id)
+      localStorage.setItem('dios:activeProject', id)
+      setTransferMessage(openProjectMessage(wantedName, true, false))
+      setWantedName('')
+      return
+    }
+    const canMake = relayToMake.some((relay) => projectIdForName([{ id: relay.id, name: relay.label }], wantedName) || projectIdForName([{ id: relay.id, name: relay.id }], wantedName))
+    setTransferMessage(openProjectMessage(wantedName, false, canMake))
+  }, [wantedName, projects, relayProjects, relayToMake])
+
   async function createFromRelay(relay: RelayProject) {
     if (typeof api.createProject !== 'function' || creating) return
     setCreating(relay.id)
@@ -51,6 +81,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
       setProjects((current) => [project, ...current])
       setSelectedProjectId(project.id)
       localStorage.setItem('dios:activeProject', project.id)
+      setWantedName('')
       setTransferMessage(`${relay.label} 홈을 만들었어요. 붙은 스킬 ${relay.skills.length}개가 아래에 나와요.`)
     } catch {
       setTransferMessage('프로젝트를 만들지 못했어요. 한 번 더 눌러 주세요.')
@@ -70,6 +101,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
           setProjects(loadedProjects || [])
           const savedProjectId = localStorage.getItem('dios:activeProject')
           setSelectedProjectId(savedProjectId && loadedProjects.some((project: any) => project.id === savedProjectId) ? savedProjectId : loadedProjects[0]?.id || '')
+          setWantedName(takeWantedProject())
         }
       } catch {
         // The home screen stays useful even when optional data is unavailable.
@@ -138,6 +170,22 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
     }
   }
 
+  async function savePack() {
+    const name = projects.find((project) => project.id === selectedProjectId)?.name || ''
+    if (!name || typeof api.projectSkillPack !== 'function' || packing) return
+    setPacking(true)
+    setPackFolder('')
+    try {
+      const result: ProjectPack = await api.projectSkillPack(name)
+      setSkillNote(result?.message || '저장하지 못했어요. 한 번 더 눌러 주세요.')
+      if (result?.ok) setPackFolder(result.folder)
+    } catch {
+      setSkillNote('바탕화면에 저장하지 못했어요. 한 번 더 눌러 주세요.')
+    } finally {
+      setPacking(false)
+    }
+  }
+
   const pickList = useMemo(() => {
     const needle = pickSearch.trim().toLowerCase()
     return availableSkills.filter((skill) => !needle || `${skill.name} ${skill.korean} ${skill.summary}`.toLowerCase().includes(needle))
@@ -203,9 +251,9 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
 
       {projects.length === 0 && <div className="project-create-line"><span>아직 프로젝트가 없어요. 만들면 이 화면이 그 프로젝트의 홈이 돼요.</span><div><input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && createProject()} placeholder="프로젝트 이름" aria-label="프로젝트 이름" /><button onClick={createProject} className="text-link">만들기</button></div></div>}
 
-      {relayToMake.length > 0 && (projects.length === 0 || (skillMatch && !skillMatch.matched)) && (
+      {relayToMake.length > 0 && (projects.length === 0 || wantedName || (skillMatch && !skillMatch.matched)) && (
         <div className="relay-make" role="group" aria-label="Agent Relay 프로젝트로 만들기">
-          <p>{projects.length === 0 ? 'Agent Relay에 있는 프로젝트를 그대로 홈으로 만들 수 있어요. 이름이 같아야 스킬을 켜고 끌 수 있어요.' : '이 이름은 Agent Relay에 없어요. 아래에서 고르면 이름이 맞는 홈을 새로 만들어요.'}</p>
+          <p>{projects.length === 0 ? 'Agent Relay에 있는 프로젝트를 그대로 홈으로 만들 수 있어요. 이름이 같아야 스킬을 켜고 끌 수 있어요.' : wantedName ? `${wantedName} 홈을 만들려면 아래에서 같은 이름을 고르세요.` : '이 이름은 Agent Relay에 없어요. 아래에서 고르면 이름이 맞는 홈을 새로 만들어요.'}</p>
           <div className="library-chips">
             {relayToMake.map((relay) => (
               <button key={relay.id} type="button" className="library-chip" disabled={Boolean(creating)} onClick={() => void createFromRelay(relay)}>
@@ -218,9 +266,15 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
 
       {activeProject && typeof api.projectSkills === 'function' && (
         <section className="project-skill-home" aria-label="이 프로젝트의 스킬">
-          <div className="section-heading"><div><div className="eyebrow">이 프로젝트의 스킬</div><h2>붙은 스킬</h2></div></div>
-          <p className="project-skill-lead">켜 두면 계획·만들기·검사에 이 스킬이 붙어요. 끄면 이 프로젝트에서만 빠지고, 스킬 글은 그대로예요.</p>
+          <div className="section-heading">
+            <div><div className="eyebrow">이 프로젝트의 스킬</div><h2>붙은 스킬</h2></div>
+            {skillMatch?.matched && projectSkills.some((skill) => skill.on) && typeof api.projectSkillPack === 'function' && (
+              <button type="button" className="skill-action" disabled={packing} onClick={() => void savePack()}>{packing ? '저장하는 중…' : '켜 둔 스킬 글 바탕화면에 저장'}</button>
+            )}
+          </div>
+          <p className="project-skill-lead">켜 두면 계획·만들기·검사에 이 스킬이 붙어요. 끄면 이 프로젝트에서만 빠지고, 스킬 글은 그대로예요. 바탕화면에 저장하면 Aside에게 이 프로젝트의 스킬 검토를 맡길 수 있어요.</p>
           {skillNote && <p className="notice-line" role="status">{skillNote}</p>}
+          {packFolder && <details className="skill-raw"><summary>원문 보기</summary><code>{packFolder}</code></details>}
           {skillMatch === null && <p className="project-skill-empty">스킬을 불러오고 있어요.</p>}
           {skillMatch && !skillMatch.matched && <p className="project-skill-empty">{skillMatch.message}</p>}
           {skillMatch?.matched && projectSkills.length === 0 && <p className="project-skill-empty">이 프로젝트에 붙은 스킬이 없어요. 아래에서 골라 붙여 보세요.</p>}

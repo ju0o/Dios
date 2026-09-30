@@ -321,6 +321,10 @@ body {
 .week-projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 12px; }
 .week-project { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.04); }
 .week-project h4 { margin: 0; font-size: 16px; }
+.usage-project-link { text-align: left; text-decoration: none; color: #fafafa; font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; gap: 4px; }
+.usage-project-link i { font-style: normal; color: #5eead4; }
+.usage-project-link:hover, .usage-project-link:focus-visible { color: #5eead4; text-decoration: underline; }
+.week-project h4 .usage-project-link { font-size: 16px; }
 .week-project .week-sentence { font-size: 14px; color: rgba(255,255,255,.7); }
 .library-projects { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); }
 .library-projects .project-skill-rows li { border-bottom: 0; min-height: 40px; padding: 4px 0; }

@@ -1,6 +1,6 @@
 {
   "name": "dios",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Windows app that keeps AI agent skills in one place",
   "main": "dist-electron/main.js",
   "scripts": {
