@@ -23,6 +23,19 @@ export function openProjectMessage(name: string, found: boolean, canMake: boolea
   return `${name} 홈이 아직 없어요. 위의 만들기에서 같은 이름으로 만들면 여기가 그 홈이 돼요.`
 }
 
+/** How many open 지금 할 일 cards belong to this project, matched the same loose way as names. */
+export function projectWorkCount(tasks: Array<{ project: string }>, projectName: string): number {
+  const wanted = fold(projectName)
+  if (!wanted) return 0
+  return tasks.filter((task) => fold(task.project) === wanted).length
+}
+
+/** The sentence on the project home about that project's open work. */
+export function projectWorkLine(projectName: string, count: number): string {
+  if (count === 0) return `${projectName}에서 지금 기다리는 일은 없어요.`
+  return `${projectName}에서 기다리는 일이 ${count}개 있어요.`
+}
+
 function fold(value: string): string {
   return value.trim().toLowerCase().replace(/[\s_-]+/g, '')
 }

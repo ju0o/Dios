@@ -1,7 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { parseGate, resultNote, workHeadline } from '../src/core/founder-work/parse-gate'
+import { noteSummary, parseGate, resultFull, resultNote, workHeadline } from '../src/core/founder-work/parse-gate'
 import { dismissOpenFile, finishOpenFile, restoreOpenFile, safeSeg, unfinishOpenFile } from '../src/core/founder-work/dismiss'
 import { readReport } from '../src/core/founder-work/read-report'
 
@@ -85,6 +85,18 @@ describe('founder work cards', () => {
     expect(resultNote('- 한 것: 댓글 화면이 열렸어요.\n- 결과: 없음\n')).toBe('댓글 화면이 열렸어요.')
     expect(resultNote('# DONE · HG-1\n작업: x\n\n## Agent가 받은 결과 보고\n링크를 올렸어요.\n')).toBe('링크를 올렸어요.')
     expect(safeSeg('JURADAR-UI 2026/09')).toBe('JURADAR-UI_202609')
+  })
+
+  it('keeps a long pasted result whole and shows one short line for it', () => {
+    const pasted = '올렸어요. 링크는 여기예요.\n\n1. 첫 줄\n2. 둘째 줄'
+    const file = `# DONE · HG-1\n작업: x\n프로젝트: JuPlan\n\n## Agent가 받은 결과 보고\n${pasted}\n\n대표님이 DIOS 지금 할 일 화면에서 끝냈어요.\n`
+    expect(resultFull(file)).toBe(pasted)
+    expect(noteSummary(resultNote(file))).toBe('올렸어요. 링크는 여기예요.')
+    const long = `${'가'.repeat(80)} ${'나'.repeat(80)}`
+    const short = noteSummary(long)
+    expect(short.endsWith('…')).toBe(true)
+    expect(short.length).toBeLessThanOrEqual(112)
+    expect(noteSummary('')).toBe('')
   })
 })
 

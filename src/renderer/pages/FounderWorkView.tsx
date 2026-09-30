@@ -254,7 +254,6 @@ function TaskCard({ task, fresh, onCopy, onDismiss, onFinish }: TaskCardProps) {
       )}
       {task.success && <p className="skill-quiet">잘 되면: {task.success}</p>}
       {isAside && <p className="work-say"><b>{task.sayToAside}</b></p>}
-      {isAside && <p className="skill-quiet">버튼을 누르면 Aside 창에 붙여 넣을 글 전체가 복사돼요.</p>}
 
       <div className="skill-toolbar">
         {isAside && (
@@ -307,11 +306,16 @@ function PastList({ title, items }: { title: string; items: PastTask[] }) {
       <h3 className="work-head">{title}</h3>
       <ul className="project-skill-list">
         {items.map((item) => (
-          <li key={`${item.status}-${item.project}-${item.title}`}>
-            <b>{item.project}</b>
-            <span>{item.title}</span>
-            {item.note && <span className="skill-quiet">{item.note}</span>}
-            {item.updatedAt > 0 && <span className="skill-quiet">{whenText(item.updatedAt)}</span>}
+          <li key={`${item.status}-${item.project}-${item.title}`} className="work-past">
+            <div className="work-past-head">
+              <b>{item.project}</b>
+              <span>{item.title}</span>
+              {item.updatedAt > 0 && <span className="skill-quiet">{whenText(item.updatedAt)}</span>}
+            </div>
+            {item.note && <p className="skill-quiet">{item.note}</p>}
+            {item.fullNote && item.fullNote.trim() !== item.note && (
+              <details className="skill-raw"><summary>결과 전체 보기</summary><pre className="work-past-full">{item.fullNote}</pre></details>
+            )}
           </li>
         ))}
       </ul>

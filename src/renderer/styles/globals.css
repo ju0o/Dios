@@ -462,3 +462,62 @@ body {
   .skill-agents { grid-template-columns: 1fr; }
   .skill-more-menu { left: 0; right: auto; }
 }
+
+/* ── Founder readability pass: bigger type, narrower lines, less chrome ── */
+.app-sidebar { width: 236px; min-width: 236px; padding: 22px 14px 16px; }
+.brand-lockup { margin-bottom: 28px; }
+.brand-lockup b { font-size: 17px; letter-spacing: .12em; }
+.brand-lockup small { font-size: 12px; letter-spacing: 0; text-transform: none; color: rgba(255,255,255,.55); }
+.sidebar-label { font-size: 12px; letter-spacing: .06em; color: rgba(255,255,255,.4); margin-bottom: 6px; }
+.sidebar-link { font-size: 15.5px; padding: 12px 12px; color: rgba(255,255,255,.72); gap: 12px; }
+.sidebar-link span { font-size: 17px; width: 20px; }
+.nav-count { margin-left: 6px; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; display: inline-grid; place-items: center; font-size: 12px; font-style: normal; font-weight: 700; background: #f59e0b; color: #1c1917; }
+.nav-count.is-over { background: #ef4444; color: #fff; }
+.local-badge { display: none; }
+.topbar { height: 60px; padding: 0 28px; font-size: 14px; }
+.breadcrumb span, .breadcrumb b { display: none; }
+.breadcrumb strong { font-size: 19px; font-weight: 600; color: #fff; }
+.topbar-actions { font-size: 13px; color: rgba(255,255,255,.5); }
+.app-content { padding: 0 28px; }
+.app-content > .skill-board, .app-content > .page-wrap { width: 100%; max-width: 1080px; margin: 0 auto; }
+.skill-board { padding: 18px 0 48px; gap: 18px; }
+.skill-lead { font-size: 18px; color: #fff; }
+.skill-quiet { font-size: 15px; }
+.skill-raw { font-size: 14px; }
+.skill-raw code, .skill-raw pre { font-size: 13px; overflow-wrap: anywhere; }
+.work-card { padding: 18px 20px; gap: 10px; }
+.work-card p, .work-card li { font-size: 16px; line-height: 1.55; }
+.work-card h3 { font-size: 19px; }
+.work-steps { list-style: decimal; padding-left: 28px; gap: 6px; }
+.work-steps li::marker { color: #5eead4; font-weight: 700; }
+.work-say { font-size: 16px; padding: 10px 12px; border-radius: 10px; background: rgba(94,234,212,.08); }
+.work-command code { background: rgba(255,255,255,.08); font-size: 14px; }
+.work-finish { background: rgba(255,255,255,.04); }
+.work-note { background: rgba(0,0,0,.25); color: #fafafa; border-color: rgba(255,255,255,.2); }
+.work-note::placeholder { color: rgba(255,255,255,.4); }
+.library-filters .library-input, .project-skill-pick .library-input { flex: 0 0 auto; width: 100%; max-width: 520px; min-height: 46px; }
+.page-wrap { padding: 24px 0 72px; }
+.page-hero { align-items: flex-start; margin-bottom: 26px; }
+.page-hero h1 { font-size: clamp(24px, 2.4vw, 32px); letter-spacing: -.02em; }
+.page-hero p { font-size: 15px; color: rgba(255,255,255,.62); margin-top: 8px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; }
+.soft-button { font-size: 14px; }
+.section-heading h2 { font-size: 20px; }
+.section-note { font-size: 13px; }
+.space-section, .split-section { margin-top: 40px; }
+.hero-grid { margin-bottom: 40px; }
+.project-skill-home { padding: 18px 20px; border-radius: 16px; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.025); }
+.project-skill-lead { font-size: 15px; color: rgba(255,255,255,.7); }
+.project-skill-rows li b { font-size: 16px; }
+.work-past { flex-direction: column; align-items: stretch !important; gap: 4px !important; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.work-past-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 16px; }
+.work-past-full { margin: 6px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(0,0,0,.25); color: rgba(255,255,255,.85); font: inherit; font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-work-line { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 20px; margin: 18px 0 0; border-radius: 16px; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); font-size: 16px; }
+.project-work-line.is-empty { background: rgba(255,255,255,.03); border-color: rgba(255,255,255,.08); color: rgba(255,255,255,.62); }
+.project-create-line { font-size: 15px; color: rgba(255,255,255,.7); padding: 16px 0; }
+.project-create-line input { font-size: 15px; width: 220px; min-height: 40px; }
+.project-create-line .text-link { font-size: 15px; }
+.project-select { font-size: 14px; min-height: 44px; }
+.relay-make p { font-size: 16px; }
+.old-home { margin-top: 28px; }
+.old-home > summary { font-size: 15px; color: rgba(255,255,255,.6); cursor: pointer; min-height: 44px; display: flex; align-items: center; }

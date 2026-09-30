@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { WeekGraph } from '../../core/agent-monitor/usage-summary'
 import type { SkillSwitch } from '../../core/skill-board/project-skills'
 import type { ProjectPack, RelayProject, SkillPick } from '../../core/skill-board/project-skill-switch'
-import { OPEN_PROJECT_KEY, openProjectMessage, projectIdForName } from '../../core/project-home/open-project'
+import { OPEN_PROJECT_KEY, openProjectMessage, projectIdForName, projectWorkCount, projectWorkLine } from '../../core/project-home/open-project'
 import { WeekBars } from '../components/WeekBars'
 import { useScan } from '../stores/scanStore'
 
@@ -44,6 +44,17 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
   const [wantedName, setWantedName] = useState('')
   const [packing, setPacking] = useState(false)
   const [packFolder, setPackFolder] = useState('')
+  const [openWork, setOpenWork] = useState<Array<{ project: string }> | null>(null)
+
+  // Open 지금 할 일 cards, so the home can say how many wait for this project. Follows live changes.
+  useEffect(() => {
+    if (typeof api.founderWorkList !== 'function') return
+    let cancel = false
+    const apply = (work: { open?: Array<{ project: string }> } | null) => { if (!cancel) setOpenWork(work?.open ?? []) }
+    api.founderWorkList().then(apply).catch(() => apply(null))
+    const stop = typeof api.onFounderWork === 'function' ? api.onFounderWork(apply) : undefined
+    return () => { cancel = true; if (typeof stop === 'function') stop() }
+  }, [])
 
   useEffect(() => {
     if (typeof api.projectRelayList !== 'function') return
@@ -229,8 +240,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
       <header className="page-hero">
         <div>
           <div className="eyebrow">프로젝트 홈</div>
-          <h1>{activeProject?.name || '지금 프로젝트는 어디까지 왔나요?'}</h1>
-          <p>지금 상태와 다음에 할 일을 보고, 필요한 곳으로 바로 이동하세요.</p>
+          <h1>{activeProject?.name || '아직 고른 프로젝트가 없어요'}</h1>
           {todayLine && <p className="today-line">{todayLine}</p>}
           {week && (
             <div className="week-block">
@@ -243,11 +253,20 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
           {projects.length > 0 && <select value={selectedProjectId} onChange={(event) => { setSelectedProjectId(event.target.value); localStorage.setItem('dios:activeProject', event.target.value) }} className="project-select">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>}
           <button onClick={importProject} className="soft-button">가져오기</button>
           {activeProject && <button onClick={exportProject} className="soft-button">내보내기</button>}
-          <button onClick={() => onNavigate('requests')} className="soft-button primary-button">요청서 만들기</button>
         </div>
       </header>
 
       {transferMessage && <div className="notice-line">{transferMessage}</div>}
+
+      {activeProject && openWork !== null && (() => {
+        const count = projectWorkCount(openWork, String(activeProject.name || ''))
+        return (
+          <div className={`project-work-line ${count ? '' : 'is-empty'}`} role="status">
+            <span>{projectWorkLine(String(activeProject.name || ''), count)}</span>
+            {count > 0 && <button type="button" className="skill-action primary" onClick={() => onNavigate('now')}>지금 할 일 보러 가기</button>}
+          </div>
+        )
+      })()}
 
       {projects.length === 0 && <div className="project-create-line"><span>아직 프로젝트가 없어요. 만들면 이 화면이 그 프로젝트의 홈이 돼요.</span><div><input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && createProject()} placeholder="프로젝트 이름" aria-label="프로젝트 이름" /><button onClick={createProject} className="text-link">만들기</button></div></div>}
 
@@ -272,7 +291,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
               <button type="button" className="skill-action" disabled={packing} onClick={() => void savePack()}>{packing ? '저장하는 중…' : '켜 둔 스킬 글 바탕화면에 저장'}</button>
             )}
           </div>
-          <p className="project-skill-lead">켜 두면 계획·만들기·검사에 이 스킬이 붙어요. 끄면 이 프로젝트에서만 빠지고, 스킬 글은 그대로예요. 바탕화면에 저장하면 Aside에게 이 프로젝트의 스킬 검토를 맡길 수 있어요.</p>
+          <p className="project-skill-lead">켜 두면 계획·만들기·검사에 이 스킬이 붙어요. 끄면 이 프로젝트에서만 빠지고, 스킬 글은 그대로예요.</p>
           {skillNote && <p className="notice-line" role="status">{skillNote}</p>}
           {packFolder && <details className="skill-raw"><summary>원문 보기</summary><code>{packFolder}</code></details>}
           {skillMatch === null && <p className="project-skill-empty">스킬을 불러오고 있어요.</p>}
@@ -317,6 +336,8 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
         </section>
       )}
 
+      <details className="old-home">
+        <summary>단계·백업·요청서 같은 예전 화면 보기</summary>
       <section className="hero-grid">
         <div className="hero-orbit glass-surface">
           <div className="orbit-glow" />
@@ -360,6 +381,7 @@ export function ProjectHomeView({ onNavigate }: ProjectHomeViewProps) {
           {currentTasks.filter((task: any) => task.status !== 'done').length === 0 && <div className="empty-line">이번 단계에서 남은 일이 없어요.</div>}
         </div>
       </section>
+      </details>
     </div>
   )
 }

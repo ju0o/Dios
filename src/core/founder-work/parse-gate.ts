@@ -28,7 +28,30 @@ export interface PastTask {
   project: string
   title: string
   note: string
+  /** Everything that was pasted as the result, kept whole so nothing is lost behind the one-line note. */
+  fullNote: string
   updatedAt: number
+}
+
+const NOTE_LIMIT = 110
+const DONE_TRAILER = /^대표님이 DIOS 지금 할 일 화면에서 끝냈어요\.?$/
+
+/** The whole pasted result under the result heading, without DIOS's own closing line. */
+export function resultFull(text: string): string {
+  const clean = text.replace(/^\uFEFF/, '')
+  const lines = sectionLines(clean, [RESULT_HEADING]).map((line) => line.replace(/\s+$/, ''))
+  while (lines.length && !lines[0].trim()) lines.shift()
+  while (lines.length && (!lines[lines.length - 1].trim() || DONE_TRAILER.test(lines[lines.length - 1].trim()))) lines.pop()
+  return lines.join('\n')
+}
+
+/** Short enough for one row: first sentence or first line, cut with … when it runs long. */
+export function noteSummary(note: string): string {
+  const first = note.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? ''
+  if (first.length <= NOTE_LIMIT) return first
+  const cut = first.slice(0, NOTE_LIMIT)
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('요. '), cut.lastIndexOf(' '))
+  return `${(stop > NOTE_LIMIT / 2 ? cut.slice(0, stop + 1) : cut).trim()}…`
 }
 
 const ASIDE_PREFIX = /^(요청:\s*|대표님이 직접 하는 일:\s*)/

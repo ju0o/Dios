@@ -219,6 +219,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMaintenance: () => ipcRenderer.invoke('operations:maintenance:list'),
   updateMaintenance: (id: string, done: boolean) => ipcRenderer.invoke('operations:maintenance:update', id, done),
   listActivity: () => ipcRenderer.invoke('operations:activity:list'),
+  changesUndoSkill: (plan: unknown) => ipcRenderer.invoke('changes:undoSkill', plan),
   saveTaskRequest: (input: any) => ipcRenderer.invoke('operations:taskRequests:save', input),
   listTaskRequests: () => ipcRenderer.invoke('operations:taskRequests:list'),
   listConnections: () => ipcRenderer.invoke('operations:connections:list'),

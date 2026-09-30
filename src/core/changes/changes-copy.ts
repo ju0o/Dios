@@ -7,12 +7,27 @@ export interface ActivityRow {
   createdAt: number
 }
 
+/** What pressing 되돌리기 on one history line should do. */
+export interface SkillUndo {
+  /** Project rows go through the project on/off list; agent rows through the skill board link. */
+  target: 'project' | 'agent'
+  /** Project label or agent name exactly as the row stored it. */
+  place: string
+  skill: string
+  /** The state to put back: true means attach again, false means detach again. */
+  on: boolean
+  /** "JuPlan에서 founder-ux 다시 뺐어요" style sentence shown after it worked. */
+  doneLine: string
+}
+
 /** One line on the 변경사항 screen about a skill that was turned on or off. */
 export interface SkillChange {
   id: string
   /** "JuPlan에 founder-ux 붙임" style sentence. */
   line: string
   createdAt: number
+  /** Present only when the row is a plain on/off that can be reversed. */
+  undo: SkillUndo | null
 }
 
 /** Files git reports, grouped the way the Founder reads them. */
@@ -31,7 +46,20 @@ export function skillChanges(rows: ActivityRow[]): SkillChange[] {
     .filter((row) => row.type === 'skill')
     .sort((left, right) => right.createdAt - left.createdAt)
     .slice(0, CHANGE_LIMIT)
-    .map((row) => ({ id: row.id, line: skillChangeLine(row.title, row.description), createdAt: row.createdAt }))
+    .map((row) => ({ id: row.id, line: skillChangeLine(row.title, row.description), createdAt: row.createdAt, undo: skillUndoPlan(row.title, row.description) }))
+}
+
+/** The reverse of one on/off row, or null when the row is not something DIOS can undo. */
+export function skillUndoPlan(title: string, description: string): SkillUndo | null {
+  const [place = '', skill = ''] = description.split('·').map((part) => part.trim())
+  if (!place || !skill) return null
+  switch (title) {
+    case '프로젝트에 스킬 붙이기': return { target: 'project', place, skill, on: false, doneLine: `${place}에서 ${skill}을 다시 뺐어요.` }
+    case '프로젝트에서 스킬 빼기': return { target: 'project', place, skill, on: true, doneLine: `${place}에 ${skill}을 다시 붙였어요.` }
+    case '에이전트에 스킬 붙이기': return { target: 'agent', place, skill, on: false, doneLine: `${place}에서 ${skill}을 다시 뺐어요.` }
+    case '에이전트에서 스킬 빼기': return { target: 'agent', place, skill, on: true, doneLine: `${place}에 ${skill}을 다시 붙였어요.` }
+    default: return null
+  }
 }
 
 /** "JuPlan에 founder-ux 붙임" from the stored title and "JuPlan · founder-ux" description. */

@@ -50,6 +50,24 @@ export function ChangesView({ onNavigate }: ChangesViewProps) {
   const [tests, setTests] = useState<TestRun | null>(null)
   const [busy, setBusy] = useState<'' | 'files' | 'tests'>('')
   const [problem, setProblem] = useState('')
+  const [undoing, setUndoing] = useState('')
+  const [undoNote, setUndoNote] = useState('')
+
+  async function undoSkill(change: SkillChange) {
+    if (!change.undo || typeof api.changesUndoSkill !== 'function' || undoing) return
+    setUndoing(change.id)
+    setProblem('')
+    try {
+      const result = (await api.changesUndoSkill(change.undo)) as { ok: boolean; message: string }
+      if (result.ok) setUndoNote(result.message)
+      else setProblem(result.message || '되돌리지 못했어요.')
+      await loadSkills()
+    } catch {
+      setProblem('되돌리지 못했어요. 잠시 뒤 다시 눌러 주세요.')
+    } finally {
+      setUndoing('')
+    }
+  }
 
   async function loadSkills() {
     if (typeof api.listActivity !== 'function') {
@@ -146,16 +164,21 @@ export function ChangesView({ onNavigate }: ChangesViewProps) {
         </header>
         {skills === null && <p className="skill-quiet">기록을 읽고 있어요.</p>}
         {skills && skills.length === 0 && <p className="skill-quiet">아직 기록이 없어요. 프로젝트 홈이나 스킬 보드에서 스킬을 켜고 끄면 여기에 남아요.</p>}
+        {undoNote && <p className="skill-toast ok" role="status">{undoNote}</p>}
         {skills && skills.length > 0 && (
           <ul className="project-skill-list">
             {skills.map((change) => (
               <li key={change.id}>
                 <span>{change.line}</span>
                 <span className="skill-quiet">{whenText(change.createdAt)}</span>
+                {change.undo && change.id === skills.find((row) => row.undo)?.id && (
+                  <button type="button" className="skill-link" disabled={Boolean(undoing)} onClick={() => void undoSkill(change)}>{undoing === change.id ? '되돌리는 중…' : '되돌리기'}</button>
+                )}
               </li>
             ))}
           </ul>
         )}
+        {skills && skills.some((change) => change.undo) && <p className="skill-quiet">되돌리기는 가장 최근 것부터 하나씩 할 수 있어요.</p>}
       </section>
 
       {root && (

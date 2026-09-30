@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { changesHeadline, fileChangesHeadline, parseGitStatus, skillChangeLine, skillChanges, testHeadline } from '../src/core/changes/changes-copy'
-import { canOpenProject, openProjectMessage, projectIdForName } from '../src/core/project-home/open-project'
+import { changesHeadline, fileChangesHeadline, parseGitStatus, skillChangeLine, skillChanges, skillUndoPlan, testHeadline } from '../src/core/changes/changes-copy'
+import { canOpenProject, openProjectMessage, projectIdForName, projectWorkCount, projectWorkLine } from '../src/core/project-home/open-project'
+
+describe('undoing one skill change', () => {
+  it('reverses plain on/off rows for projects and agents', () => {
+    expect(skillUndoPlan('프로젝트에 스킬 붙이기', 'JuPlan · founder-ux')).toEqual({ target: 'project', place: 'JuPlan', skill: 'founder-ux', on: false, doneLine: 'JuPlan에서 founder-ux을 다시 뺐어요.' })
+    expect(skillUndoPlan('에이전트에서 스킬 빼기', 'Claude · demo-skill')).toMatchObject({ target: 'agent', place: 'Claude', skill: 'demo-skill', on: true })
+  })
+
+  it('offers nothing for rows that are not an on/off, or lack a place', () => {
+    expect(skillUndoPlan('프로젝트 스킬 글 바탕화면에 저장', 'JuPlan')).toBeNull()
+    expect(skillUndoPlan('프로젝트에 스킬 붙이기', 'founder-ux')).toBeNull()
+    const rows = skillChanges([{ id: 'a', type: 'skill', title: '스킬 받기', description: 'x', createdAt: 1 }])
+    expect(rows[0].undo).toBeNull()
+  })
+})
+
+describe('open work on the project home', () => {
+  it('counts only this project, matching names loosely', () => {
+    const open = [{ project: 'JuPlan' }, { project: 'ju-plan' }, { project: 'JuRadar' }]
+    expect(projectWorkCount(open, 'Ju Plan')).toBe(2)
+    expect(projectWorkCount(open, '')).toBe(0)
+    expect(projectWorkLine('JuPlan', 2)).toBe('JuPlan에서 기다리는 일이 2개 있어요.')
+    expect(projectWorkLine('JuPlan', 0)).toBe('JuPlan에서 지금 기다리는 일은 없어요.')
+  })
+})
 
 describe('skill change history', () => {
   it('turns stored rows into one Korean line each, newest first, skills only', () => {

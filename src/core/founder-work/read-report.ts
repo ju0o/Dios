@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { parseGate, resultNote, type OpenTask, type PastTask } from './parse-gate'
+import { noteSummary, parseGate, resultFull, resultNote, type OpenTask, type PastTask } from './parse-gate'
 
 export interface FounderWork {
   found: boolean
@@ -52,9 +52,12 @@ function readOpen(dir: string, kind: 'aside' | 'founder'): OpenTask[] {
 
 function readPast(dir: string): PastTask[] {
   const files = mdFiles(dir, true)
-  const notes = new Map<string, string>()
+  const notes = new Map<string, { note: string; fullNote: string }>()
   for (const file of files) {
-    if (path.basename(file).toLowerCase() === 'result.md') notes.set(path.dirname(file), resultNote(readText(file)))
+    if (path.basename(file).toLowerCase() === 'result.md') {
+      const text = readText(file)
+      notes.set(path.dirname(file), { note: noteSummary(resultNote(text)), fullNote: resultFull(text) })
+    }
   }
   const tasks: PastTask[] = []
   for (const file of files) {
@@ -66,7 +69,8 @@ function readPast(dir: string): PastTask[] {
     const parts = relative.split(path.sep)
     const marker = parts.indexOf(status === 'done' ? 'DONE' : 'BLOCKED')
     const project = marker > 0 ? parts[marker - 1] : parsed.project
-    tasks.push({ status, project, title: parsed.title, note: notes.get(path.dirname(file)) ?? '', updatedAt: parsed.updatedAt })
+    const saved = notes.get(path.dirname(file))
+    tasks.push({ status, project, title: parsed.title, note: saved?.note ?? '', fullNote: saved?.fullNote ?? '', updatedAt: parsed.updatedAt })
   }
   return tasks
 }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ScanProvider } from './stores/scanStore'
 import { EmergencyStopProvider } from './stores/emergencyStore'
-import { EmergencyStop } from './components/EmergencyStop'
 import { ProjectHomeView } from './pages/ProjectHomeView'
 import { ProjectConnectionsView } from './pages/ProjectConnectionsView'
 import { ChangesView } from './pages/ChangesView'
@@ -66,8 +65,28 @@ const moreNav: Array<{ id: ViewType; label: string; icon: string }> = [
   { id: 'home', label: '프로젝트 홈', icon: '⌂' },
   { id: 'changes', label: '변경사항', icon: '⌁' },
   { id: 'files', label: '자료 스캔', icon: '⌗' },
-  { id: 'settings', label: '설정', icon: '⚙' },
+  { id: 'operations', label: '연동 관리', icon: '◎' },
 ]
+
+/** Screen names for the top bar, including ones reached only from inside another screen. */
+const SCREEN_TITLES: Partial<Record<ViewType, string>> = {
+  settings: '설정',
+  'project-data': '프로젝트 자료',
+  maintenance: '유지보수',
+  backups: '백업·복구',
+  environment: '환경 상태',
+  requests: '요청서',
+  tree: '폴더 구조',
+  memory: '기억',
+  agents: '에이전트',
+  system: '시스템',
+  dashboard: '대시보드',
+  timeline: '타임라인',
+  aiResources: 'AI 자원',
+  decisions: '결정 기록',
+  experiments: '실험',
+  humanGates: '사람 확인',
+}
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewType>('now')
@@ -163,19 +182,19 @@ export default function App() {
         <ScanProvider>
         <div className="app-shell">
           <aside className="app-sidebar glass-strong">
-            <button className="brand-lockup" onClick={() => navigate('skillBoard')}><span className="brand-mark">D</span><span><b>DIOS</b><small>스킬 보드</small></span></button>
-            <div className="sidebar-label">지금</div>
+            <button className="brand-lockup" onClick={() => navigate('now')}><span className="brand-mark">D</span><span><b>DIOS</b><small>AI 스킬과 할 일</small></span></button>
+            <div className="sidebar-label">자주 쓰는 화면</div>
             <nav className="sidebar-nav">{primaryNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}{item.id === 'skillBoard' && drift > 0 && <em className="nav-count">{drift}</em>}{item.id === 'now' && workCount > 0 && <em className="nav-count">{workCount}</em>}{item.id === 'agentMonitor' && usageAlerts.count > 0 && <em className={`nav-count ${usageAlerts.over > 0 ? 'is-over' : 'is-warn'}`} aria-label={usageAlerts.over > 0 ? '정해 둔 금액을 넘은 곳이 있어요' : '정해 둔 금액에 가까운 곳이 있어요'}>{usageAlerts.count}</em>}<i>›</i></button>)}</nav>
             <div className="sidebar-spacer" />
             <div className="sidebar-label">더 보기</div>
             <nav className="sidebar-nav compact-nav">
-              <button type="button" onClick={() => setMoreOpen((open) => !open)} className="sidebar-link"><span>▾</span>{moreOpen ? '접기' : '이전 화면'}<i>›</i></button>
+              <button type="button" onClick={() => setMoreOpen((open) => !open)} className="sidebar-link" aria-expanded={moreOpen}><span>{moreOpen ? '▾' : '▸'}</span>{moreOpen ? '접기' : '다른 화면'}<i>›</i></button>
               {moreOpen && moreNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}<i>›</i></button>)}
             </nav>
-            <div className="sidebar-footer"><button onClick={() => navigate('operations')} className="sidebar-link"><span>◎</span>연동 관리<i>›</i></button><button onClick={() => navigate('settings')} className="sidebar-link"><span>⚙</span>설정<i>›</i></button><UpdateButton /><div className="local-badge"><span /> 이 컴퓨터만</div></div>
+            <div className="sidebar-footer"><button onClick={() => navigate('settings')} className={`sidebar-link ${currentView === 'settings' ? 'is-active' : ''}`}><span>⚙</span>설정<i>›</i></button><UpdateButton /></div>
           </aside>
           <main className="app-main">
-            <div className="topbar"><div className="breadcrumb"><span>DIOS</span><b>/</b><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || '스킬 보드'}</strong></div><div className="topbar-actions"><button onClick={() => navigate('skillBoard')} className="topbar-button">스킬 보드</button><span className="online-dot" /> 이 컴퓨터에서만</div></div>
+            <div className="topbar"><div className="breadcrumb"><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || SCREEN_TITLES[currentView] || 'DIOS'}</strong></div><div className="topbar-actions"><span className="online-dot" /> 이 컴퓨터에서만 돌아가요</div></div>
             <WhatsNewLine />
             <div key={welcome ? 'welcome' : currentView} className="app-content">
               {welcome ? (
@@ -188,7 +207,6 @@ export default function App() {
             </div>
           </main>
           <CommandPalette onNavigate={navigate} />
-          <EmergencyStop />
         </div>
         </ScanProvider>
       </EmergencyStopProvider>

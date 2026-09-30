@@ -84,6 +84,15 @@ function createWindow() {
   })
 }
 
+// Electron answers an uncaught error with a modal box that freezes the whole app behind it.
+// Background helpers (translation, watchers) must never do that to the Founder; keep a log line instead.
+process.on('uncaughtException', (error) => {
+  console.error('[dios] main process error', error)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[dios] main process rejection', reason)
+})
+
 app.whenReady().then(() => {
   const openedAt = Date.now()
   setQuietHost({
@@ -948,6 +957,27 @@ ipcMain.handle('skillBoard:unlink', async (_event, placeId: string, agentId: str
   const result = await unlinkAt(String(placeId || 'local'), String(agentId), String(skillName))
   if (result.ok) recordActivity('skill', '에이전트에서 스킬 빼기', `${await agentTitle(String(agentId))} · ${String(skillName)}`)
   return result
+})
+
+/** 되돌리기 on the 변경사항 history: put one skill back the way it was before that row. */
+ipcMain.handle('changes:undoSkill', async (_event, plan: import('../src/core/changes/changes-copy').SkillUndo) => {
+  const skill = String(plan?.skill || '')
+  const place = String(plan?.place || '')
+  if (!skill || !place) return { ok: false, message: '되돌릴 내용을 못 읽었어요.' }
+  if (plan.target === 'project') {
+    const { setProjectSkill } = await import('../src/core/skill-board/project-skill-switch')
+    const result = setProjectSkill(os.homedir(), place, skill, Boolean(plan.on), connectedSkillRoots())
+    const changed = result.matched && (result.message.includes('붙였어요') || result.message.includes('뺐어요'))
+    if (changed) recordActivity('skill', plan.on ? '프로젝트에 스킬 붙이기' : '프로젝트에서 스킬 빼기', `${result.label} · ${skill}`)
+    return { ok: changed, message: changed ? plan.doneLine : result.message }
+  }
+  const { LIBRARY_AGENTS } = await import('../src/core/skill-library/catalog')
+  const agentId = LIBRARY_AGENTS.find((agent) => agent.name === place || agent.id === place)?.id
+  if (!agentId) return { ok: false, message: `${place}라는 에이전트를 못 찾았어요.` }
+  const { linkAt, unlinkAt } = await import('../src/core/skill-board/board-service')
+  const result = plan.on ? await linkAt('local', agentId, skill) : await unlinkAt('local', agentId, skill)
+  if (result.ok) recordActivity('skill', plan.on ? '에이전트에 스킬 붙이기' : '에이전트에서 스킬 빼기', `${place} · ${skill}`)
+  return { ok: result.ok, message: result.ok ? plan.doneLine : (result.message || '되돌리지 못했어요.') }
 })
 
 ipcMain.handle('skillBoard:ack', async (_event, placeId: string, skillName: string) => {

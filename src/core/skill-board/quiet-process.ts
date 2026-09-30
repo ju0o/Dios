@@ -94,13 +94,17 @@ export function hiddenCaptureScript(line: string): string {
  * On Windows this does not use a detached console, which is what was covering DIOS during translation.
  */
 export function startHidden(command: string, args: string[]): void {
+  // A missing program must not become an uncaught 'error' event: Electron would answer with a modal
+  // error box on the main thread and the whole app would freeze behind it.
   if (process.platform !== 'win32') {
     const child = spawn(command, args, { detached: true, stdio: 'ignore' })
+    child.on('error', () => undefined)
     child.unref()
     return
   }
   launchVbs(hiddenLaunchScript(command, args), () => {
     const child = spawn(command, args, { windowsHide: true, stdio: 'ignore', shell: false })
+    child.on('error', () => undefined)
     child.unref()
   })
   nudgeSoon()
@@ -170,7 +174,9 @@ function runWindows(command: string, args: string[], input: string, cwd: string 
     let failed = false
     const timer = setTimeout(() => {
       if (child.pid) {
-        spawn(winExe('taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).unref()
+        const killer = spawn(winExe('taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+        killer.on('error', () => undefined)
+        killer.unref()
       }
       child.kill()
       if (!settled) {
