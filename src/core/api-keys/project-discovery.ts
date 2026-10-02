@@ -101,9 +101,24 @@ export function asDiscoveryPlace(place: { id: string; name: string; kind: 'local
   return { placeId: place.id, placeName: place.name, placeKind: place.kind }
 }
 
-/** Every SSH or WSL place. A new host in the place list is included without a code change. */
-export function remotePlaces<T extends { kind: string }>(places: T[]): T[] {
-  return places.filter((place) => place.kind === 'ssh' || place.kind === 'wsl')
+/**
+ * Which places start checked.
+ * Nothing saved yet means this computer only. A saved list never grows by itself,
+ * so a new SSH host stays off until the Founder checks it.
+ */
+export function discoverySelection<T extends { id: string; kind: string }>(places: T[], saved: string[] | null): string[] {
+  if (saved === null) {
+    const local = places.find((place) => place.kind === 'local')
+    return local ? [local.id] : []
+  }
+  const known = new Set(places.map((place) => place.id))
+  return saved.filter((id) => known.has(id))
+}
+
+/** Places the Founder checked. An id that is not in the place list is ignored. */
+export function chosenPlaces<T extends { id: string; kind: string }>(places: T[], selectedIds: string[]): T[] {
+  const wanted = new Set(selectedIds)
+  return places.filter((place) => wanted.has(place.id))
 }
 
 /** One Korean line when a remote place cannot be reached. The rest of the scan still finishes. */

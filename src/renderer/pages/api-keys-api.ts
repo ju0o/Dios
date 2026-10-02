@@ -35,6 +35,19 @@ export interface ScanRootResult extends RootReport {
   line: string
 }
 
+/** One place the Founder can include in a project search. */
+export interface DiscoveryPlaceChoice {
+  id: string
+  name: string
+  kind: 'local' | 'ssh' | 'wsl'
+}
+
+export interface DiscoveryPlaces {
+  places: DiscoveryPlaceChoice[]
+  /** Checked place ids. A first visit is only this computer. */
+  selectedIds: string[]
+}
+
 export interface ScanResult extends ListingResult {
   added: number
   roots: ScanRootResult[]
@@ -62,8 +75,10 @@ export interface ApiKeysApi {
   apiKeysPeekAll: () => Promise<Record<string, string>>
   /** Scan every known folder, or only `onlyRoots`. */
   apiKeysScan: (onlyRoots?: string[]) => Promise<ScanResult>
-  /** Look for new projects here and on the other computer. */
-  apiKeysDiscover: () => Promise<ScanResult>
+  /** Places that can be searched, plus which ones are checked. Does not connect anywhere. */
+  apiKeysDiscoveryPlaces: () => Promise<DiscoveryPlaces>
+  /** Look for new projects only in the checked places. */
+  apiKeysDiscover: (placeIds: string[]) => Promise<ScanResult>
   /** Save the chosen candidate ids. The secret stays in the main process. */
   apiKeysSaveCandidates: (ids: string[]) => Promise<ScanResult>
   /** Forget the chosen candidates without saving. */

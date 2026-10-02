@@ -14,7 +14,8 @@ import {
   normalizeOrigin,
   parseRemoteProjects,
   placeFailureNote,
-  remotePlaces,
+  chosenPlaces,
+  discoverySelection,
   toPublicCandidate,
   withIds,
   type GitProbe,
@@ -122,14 +123,18 @@ describe('project discovery', () => {
     expect(Object.keys(here).sort()).toEqual(['id', 'label', 'masked', 'placeId', 'placeKind', 'placeName', 'platform', 'project', 'projectPath', 'source'])
   })
 
-  it('asks every remote place, and a missed place does not drop local keys', () => {
+  it('keeps a new remote off until it is chosen, and a missed place does not drop local keys', () => {
     const places = [
       { id: 'local', name: '이 컴퓨터', kind: 'local', target: '' },
       { id: 'ssh:asus', name: 'asus (SSH)', kind: 'ssh', target: 'asus' },
       { id: 'ssh:build', name: 'build (SSH)', kind: 'ssh', target: 'build' },
       { id: 'wsl:Ubuntu', name: 'Ubuntu (WSL)', kind: 'wsl', target: 'Ubuntu' },
     ]
-    expect(remotePlaces(places).map((place) => place.name)).toEqual(['asus (SSH)', 'build (SSH)', 'Ubuntu (WSL)'])
+    expect(discoverySelection(places, null).map((id) => id)).toEqual(['local'])
+    const withNew = [...places, { id: 'ssh:server', name: 'server (SSH)', kind: 'ssh', target: 'server' }]
+    expect(discoverySelection(withNew, ['local', 'ssh:asus']).map((id) => id)).toEqual(['local', 'ssh:asus'])
+    expect(chosenPlaces(withNew, ['ssh:server']).map((place) => place.name)).toEqual(['server (SSH)'])
+    expect(chosenPlaces(withNew, ['ssh:missing'])).toEqual([])
     const memory = new CandidateMemory()
     memory.replacePlace('local', withIds([{
       finding: { project: 'JuPlan', platform: 'OpenAI', label: 'OPENAI_API_KEY', key: SECRET, source: '.env', root: '/JuPlan' },

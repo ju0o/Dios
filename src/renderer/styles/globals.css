@@ -113,6 +113,8 @@ code, pre, kbd, .mono { font-family: var(--ju-mono); }
 .scan-chip { font-family: var(--ju-mono); font-size: 12px; letter-spacing: .04em; color: var(--ju-muted); }
 .scan-chip.is-count { color: var(--ju-paper); }
 @media (max-width: 640px) { .scan-row { grid-template-columns: 10px minmax(0, 1fr); } .scan-row-actions { grid-column: 2; justify-content: flex-start; } }
+.discover-places { display: flex; flex-direction: column; gap: 8px; }
+.discover-place-list { display: flex; flex-direction: column; }
 .key-candidates { display: flex; flex-direction: column; gap: 12px; }
 .key-candidate-group { display: flex; flex-direction: column; gap: 2px; }
 .key-candidate-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--ju-line-soft); }

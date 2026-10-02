@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { OTHER_PLATFORM, PLATFORMS, USAGE_TYPES, groupByProject, headline, usageLine, type ApiKeyCard, type ApiKeyInput } from '../../core/api-keys/api-key-text'
 import { healthLabel } from '../../core/api-keys/key-health'
-import { apiKeysApi, type KeyListing, type KeyResult, type PublicCandidate, type ScanOrigin, type ScanResult, type ScanRootResult } from './api-keys-api'
+import { apiKeysApi, type DiscoveryPlaceChoice, type KeyListing, type KeyResult, type PublicCandidate, type ScanOrigin, type ScanResult, type ScanRootResult } from './api-keys-api'
 import { whenText } from './skill-board-api'
 
 type Notice = { ok: boolean; text: string; undoId?: string; undoEnv?: boolean } | null
@@ -57,6 +57,9 @@ export function ApiKeysView() {
   const [placeNotes, setPlaceNotes] = useState<string[]>([])
   const [lead, setLead] = useState('')
   const [discovering, setDiscovering] = useState(false)
+  const [discoverOpen, setDiscoverOpen] = useState(false)
+  const [discoverPlaces, setDiscoverPlaces] = useState<DiscoveryPlaceChoice[]>([])
+  const [discoverPick, setDiscoverPick] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
     const api = apiKeysApi()
@@ -115,19 +118,42 @@ export function ApiKeysView() {
     }
   }, [takeScan])
 
-  /** This computer and every SSH or WSL place. A missed place does not cancel the rest. */
+  /** Open the place list. Nothing is contacted until the Founder presses the search button. */
+  const openDiscover = useCallback(async () => {
+    const api = apiKeysApi()
+    if (!api?.apiKeysDiscoveryPlaces) return
+    if (discoverOpen) {
+      setDiscoverOpen(false)
+      return
+    }
+    try {
+      const listed = await api.apiKeysDiscoveryPlaces()
+      setDiscoverPlaces(listed.places)
+      setDiscoverPick(Object.fromEntries(listed.places.map((place) => [place.id, listed.selectedIds.includes(place.id)])))
+      setDiscoverOpen(true)
+    } catch {
+      setNotice({ ok: false, text: '찾을 위치 목록을 읽지 못했어요.' })
+    }
+  }, [discoverOpen])
+
+  /** Search only the checked places. A remote place that is off is not contacted. */
   const discover = useCallback(async () => {
     const api = apiKeysApi()
     if (!api?.apiKeysDiscover) return
+    const ids = discoverPlaces.filter((place) => discoverPick[place.id]).map((place) => place.id)
+    if (!ids.length) {
+      setNotice({ ok: false, text: '찾을 위치를 하나 골라 주세요.' })
+      return
+    }
     setDiscovering(true)
     try {
-      takeScan(await api.apiKeysDiscover(), false)
+      takeScan(await api.apiKeysDiscover(ids), false)
     } catch {
       setNotice({ ok: false, text: '프로젝트를 찾지 못했어요. 다시 시도해 주세요.' })
     } finally {
       setDiscovering(false)
     }
-  }, [takeScan])
+  }, [takeScan, discoverPlaces, discoverPick])
 
   const saveCandidates = useCallback(async (ids: string[]) => {
     const api = apiKeysApi()
@@ -403,7 +429,7 @@ export function ApiKeysView() {
               {`아래 폴더 ${scanRoots.length}곳 모두 훑기`}
             </button>
           )}
-          <button type="button" className="skill-action" disabled={scanning || discovering} onClick={() => void discover()}>
+          <button type="button" className="skill-action" disabled={scanning || discovering} aria-expanded={discoverOpen} onClick={() => void openDiscover()}>
             {discovering ? '프로젝트를 찾는 중…' : '새 프로젝트 찾기'}
           </button>
           {cards.length > 0 && (
@@ -421,6 +447,30 @@ export function ApiKeysView() {
           )}
         </div>
       </header>
+
+      {discoverOpen && (
+        <section className="skill-card discover-places" aria-label="탐색 위치">
+          <b>탐색 위치</b>
+          <div className="discover-place-list">
+            {discoverPlaces.map((place) => (
+              <label key={place.id} className="key-candidate-row">
+                <input
+                  type="checkbox"
+                  checked={discoverPick[place.id] === true}
+                  aria-label={place.name}
+                  onChange={(event) => setDiscoverPick((current) => ({ ...current, [place.id]: event.target.checked }))}
+                />
+                <span>{place.name}</span>
+              </label>
+            ))}
+          </div>
+          <div className="skill-toolbar">
+            <button type="button" className="skill-action primary" disabled={discovering} onClick={() => void discover()}>
+              {discovering ? '프로젝트를 찾는 중…' : '선택한 위치에서 찾기'}
+            </button>
+          </div>
+        </section>
+      )}
 
       {(candidates.length > 0 || placeNotes.length > 0 || lead) && (
         <CandidateCard

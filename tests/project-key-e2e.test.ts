@@ -191,6 +191,7 @@ describe('synthetic project key discovery', () => {
     expect(discovery.includes("host === 'asus'")).toBe(false)
     expect(discovery.includes("host === 'main'")).toBe(false)
     expect(main.includes('computerLabel')).toBe(false)
-    expect(main.includes('discoveryPlaces')).toBe(false)
+    expect(main.includes('remotePlaces')).toBe(false)
+    expect(main.includes('chosenPlaces')).toBe(true)
   })
 })

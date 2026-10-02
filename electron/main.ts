@@ -1259,18 +1259,27 @@ async function candidateBox() {
 let envUndo: { keyId: string; file: string; backup: string; oldKey: string; project: string; platform: string; label: string; note: string } | null = null
 
 const SCAN_ROOTS_KEY = 'apiScanRoots'
+/** Place ids the Founder last chose for project discovery. Missing means "not chosen yet". */
+const DISCOVERY_PLACES_KEY = 'apiDiscoveryPlaces'
 /** Default or project folders the Founder took out with 빼기. */
 const SCAN_EXCLUDED_KEY = 'apiScanExcluded'
 
 type ScanOrigin = 'picked' | 'project' | 'default'
 
 function readPathList(key: string): string[] {
+  const stored = readStoredIds(key)
+  return stored ?? []
+}
+
+/** Null when this setting has never been saved, so a first visit can keep its own default. */
+function readStoredIds(key: string): string[] | null {
   try {
     const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(key) as { value_json?: string } | undefined
-    const parsed = row?.value_json ? JSON.parse(row.value_json) : []
+    if (!row) return null
+    const parsed = row.value_json ? JSON.parse(row.value_json) : []
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
   } catch {
-    return []
+    return null
   }
 }
 
@@ -1344,16 +1353,33 @@ async function runKeyScan(onlyRoots?: string[]) {
   }
 }
 
-/** Look on this computer and on every SSH or WSL place. Keys stay candidates until a yes. */
-async function runProjectDiscovery() {
+/** Look only at the places the Founder checked. A remote place that is off is not contacted. */
+async function runProjectDiscovery(selectedIds: string[]) {
   const discovery = await import('../src/core/api-keys/project-discovery')
   const { listPlaces, runRemote } = await import('../src/core/skill-board/places')
-  const local = await runKeyScan()
+  const places = await listPlaces(os.homedir(), process.platform)
+  const chosen = discovery.chosenPlaces(places, selectedIds)
+  writePathList(DISCOVERY_PLACES_KEY, chosen.map((place) => place.id))
+  const localPlace = chosen.find((place) => place.kind === 'local')
+  const local = localPlace
+    ? await runKeyScan()
+    : {
+      ok: true,
+      message: chosen.length ? '' : '찾을 위치를 하나 골라 주세요.',
+      added: 0,
+      roots: [],
+      scannedAt: 0,
+      candidates: (await candidateBox()).list(),
+      notes: [] as string[],
+      lead: '',
+      projectsFound: 0,
+      listing: await keyListing(),
+    }
   const notes = [...local.notes]
   let projectsFound = local.projectsFound
   const memory = await candidateBox()
-  const places = await listPlaces(os.homedir(), process.platform)
-  for (const place of discovery.remotePlaces(places)) {
+  for (const place of chosen) {
+    if (place.kind === 'local') continue
     const here = discovery.asDiscoveryPlace(place)
     try {
       const raw = await runRemote(place, [], discovery.DISCOVERY_SCRIPT, 12000)
@@ -1561,8 +1587,19 @@ ipcMain.handle('apiKeys:scan', async (_event, onlyRoots?: unknown) => {
   return runKeyScan(roots)
 })
 
-/** Find projects on this computer and on each SSH or WSL place. Keys stay as candidates. */
-ipcMain.handle('apiKeys:discover', async () => runProjectDiscovery())
+/** Places the Founder can check. This does not connect to any of them. */
+ipcMain.handle('apiKeys:discoveryPlaces', async () => {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listPlaces } = await import('../src/core/skill-board/places')
+  const places = (await listPlaces(os.homedir(), process.platform)).map((place) => ({ id: place.id, name: place.name, kind: place.kind }))
+  return { places, selectedIds: discovery.discoverySelection(places, readStoredIds(DISCOVERY_PLACES_KEY)) }
+})
+
+/** Find projects only in the places the Founder checked. Keys stay as candidates. */
+ipcMain.handle('apiKeys:discover', async (_event, ids: unknown) => {
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : []
+  return runProjectDiscovery(wanted)
+})
 
 /** Save only the candidates the Founder picked. */
 ipcMain.handle('apiKeys:saveCandidates', async (_event, ids: unknown) => {
