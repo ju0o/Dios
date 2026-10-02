@@ -1,3 +1,4 @@
+import { processIsOld } from './background-jobs'
 import { repoHasUnsaved } from './git-leftovers'
 import { bytesText, heavyTotal } from './space-hogs'
 import type { TidyReport } from './types'
@@ -6,15 +7,43 @@ import type { TidyReport } from './types'
 export function tidyHeadline(report: TidyReport): string {
   const repos = report.repos.filter(repoHasUnsaved).length
   const running = report.processes.length
+  const overlaps = report.overlaps.length
   const jobs = report.jobs.filter((job) => job.enabled).length
   const space = heavyTotal(report.heavy)
   const parts: string[] = []
   if (repos > 0) parts.push(`저장 안 한 수정이 있는 프로젝트 ${repos}곳`)
   if (running > 0) parts.push(`창 없이 켜져 있는 프로그램 ${running}개`)
+  if (overlaps > 0) parts.push(`같은 자리를 두고 겹친 프로그램 ${overlaps}건`)
   if (jobs > 0) parts.push(`혼자 도는 예약 작업 ${jobs}개`)
   if (space >= 100 * 1048576) parts.push(`비울 수 있는 자리 ${bytesText(space)}`)
   if (!parts.length) return report.scannedAt ? '지금은 정리할 게 없어요. 깨끗해요.' : '아직 살펴보지 않았어요.'
   return `${parts.join(', ')}예요.`
+}
+
+/** What the 정리 badge in the left menu counts and how it reads. */
+export interface TidyBadge {
+  /** Programs on for more than a day plus port/folder overlaps; 0 hides the badge. */
+  count: number
+  /** How many of those are programs on for more than a day. */
+  old: number
+}
+
+/**
+ * The left-menu number. Only what costs something right now is counted — a server left on
+ * for more than a day, or two programs in each other's way — so the badge is not a permanent
+ * "25" for every project with unsaved work.
+ */
+export function tidyBadge(report: Pick<TidyReport, 'processes' | 'overlaps'>, now: number = Date.now()): TidyBadge {
+  const old = report.processes.filter((proc) => processIsOld(proc, now)).length
+  return { count: old + report.overlaps.length, old }
+}
+
+/** Screen-reader text for the badge, so the number says what it means. */
+export function tidyBadgeLabel(badge: TidyBadge): string {
+  if (badge.count <= 0) return ''
+  if (badge.old > 0 && badge.count > badge.old) return '하루 넘게 켜진 프로그램과 겹쳐서 켜진 프로그램이 있어요'
+  if (badge.old > 0) return '하루 넘게 켜진 프로그램이 있어요'
+  return '같은 자리를 두고 겹친 프로그램이 있어요'
 }
 
 /** Section headers with counts, so each card says how much is inside before it is opened. */

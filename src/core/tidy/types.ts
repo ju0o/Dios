@@ -78,6 +78,21 @@ export interface HeadlessProcess {
   /** Epoch ms when it started; 0 when unknown. */
   startedAt: number
   rssBytes: number
+  /** TCP ports this program (or a child of it) is listening on; empty when the OS did not say. */
+  ports: number[]
+}
+
+/**
+ * Two or more listed programs that are in each other's way: the same port, or the same
+ * project folder started twice so the later one was pushed to another port.
+ */
+export interface PortOverlap {
+  kind: 'same-port' | 'same-folder'
+  /** The shared port for 'same-port'; 0 for 'same-folder'. */
+  port: number
+  /** The shared working folder for 'same-folder'; '' for 'same-port'. */
+  cwd: string
+  pids: number[]
 }
 
 export type HeavyKind = 'node_modules' | 'venv' | 'build' | 'cache' | 'temp' | 'worktree'
@@ -103,6 +118,8 @@ export interface TidyReport {
   repos: RepoLeftover[]
   jobs: ScheduledJob[]
   processes: HeadlessProcess[]
+  /** Programs that share a port or a folder; each entry points at pids in `processes`. */
+  overlaps: PortOverlap[]
   heavy: HeavyFolder[]
   /** Plain Korean notes about what could not be checked (no git, no crontab, ...). */
   notes: string[]
