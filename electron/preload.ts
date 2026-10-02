@@ -208,6 +208,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apiKeysUndoEnv: () => ipcRenderer.invoke('apiKeys:undoEnv'),
 
   // ═══════════════════════════════════════════
+  // 정리 (unsaved work, background jobs, heavy folders)
+  // ═══════════════════════════════════════════
+  tidyReport: (refresh?: boolean) => ipcRenderer.invoke('tidy:report', refresh),
+  tidyOpen: (target: string) => ipcRenderer.invoke('tidy:open', target),
+  tidyStop: (pid: number) => ipcRenderer.invoke('tidy:stop', pid),
+  tidyTrash: (target: string) => ipcRenderer.invoke('tidy:trash', target),
+  tidyPruneWorktrees: (repo: string) => ipcRenderer.invoke('tidy:pruneWorktrees', repo),
+
+  // ═══════════════════════════════════════════
   // Operations center
   // ═══════════════════════════════════════════
   getAppSettings: () => ipcRenderer.invoke('operations:settings:get'),

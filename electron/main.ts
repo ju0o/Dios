@@ -1531,6 +1531,214 @@ ipcMain.handle('apiKeys:openScanRoot', async (_event, root: string) => {
   return error ? { ok: false, message: '폴더를 열지 못했어요.' } : { ok: true, message: '' }
 })
 
+// ═══════════════════════════════════════════
+// 정리: unsaved git work, things running on their own, and folders that only take space.
+// Reads happen here; the only writes are the ones the Founder presses (stop, trash, prune).
+// ═══════════════════════════════════════════
+type TidyReport = import('../src/core/tidy/types').TidyReport
+type TidyRunner = import('../src/core/tidy/types').Runner
+
+let lastTidy: TidyReport | null = null
+let tidyInFlight: Promise<TidyReport> | null = null
+
+const tidyRun: TidyRunner = (command, args, options) => runQuiet(command, args, '', options)
+
+async function eachWithLimit<T>(items: T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next]
+      next += 1
+      await work(item)
+    }
+  })
+  await Promise.all(lanes)
+}
+
+async function tidyJobs(): Promise<{ jobs: TidyReport['jobs']; notes: string[] }> {
+  const { parseCrontab, parseSchtasksCsv, parseSystemdTimers } = await import('../src/core/tidy/background-jobs')
+  const notes: string[] = []
+  const jobs: TidyReport['jobs'] = []
+  if (process.platform === 'win32') {
+    try {
+      const result = await tidyRun('schtasks', ['/query', '/fo', 'CSV', '/v'], { timeoutMs: 40000 })
+      if (result.code === 0) jobs.push(...parseSchtasksCsv(result.stdout).filter((job) => job.enabled))
+      else notes.push('Windows 예약 작업 목록을 읽지 못했어요.')
+    } catch {
+      notes.push('Windows 예약 작업 목록을 읽지 못했어요.')
+    }
+    return { jobs, notes }
+  }
+  try {
+    const cron = await tidyRun('crontab', ['-l'], { timeoutMs: 10000 })
+    if (cron.code === 0) jobs.push(...parseCrontab(cron.stdout))
+  } catch {
+    // No crontab program: nothing scheduled that way.
+  }
+  try {
+    const timers = await tidyRun('systemctl', ['--user', 'list-timers', '--all', '--no-pager', '--output=json'], { timeoutMs: 10000 })
+    if (timers.code === 0) jobs.push(...parseSystemdTimers(timers.stdout))
+  } catch {
+    // No systemd: fine.
+  }
+  return { jobs, notes }
+}
+
+const WINDOWS_PROCESS_SCRIPT = [
+  "$names = 'node.exe','python.exe','python3.exe','pythonw.exe','electron.exe','ollama.exe','ngrok.exe','cloudflared.exe','caddy.exe','nginx.exe','php.exe','cargo.exe','go.exe','bun.exe','deno.exe','java.exe'",
+  'Get-CimInstance Win32_Process | Where-Object { $names -contains $_.Name } | ForEach-Object {',
+  '  [pscustomobject]@{ pid = $_.ProcessId; ppid = $_.ParentProcessId; name = $_.Name; args = [string]$_.CommandLine;',
+  '    startedAt = $(if ($_.CreationDate) { [int64](([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()) } else { 0 });',
+  '    rssBytes = [int64]$_.WorkingSetSize }',
+  '} | ConvertTo-Json -Compress',
+].join('\n')
+
+async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; notes: string[] }> {
+  const { headlessProcesses, parseProcessJson, parsePsList } = await import('../src/core/tidy/background-jobs')
+  const notes: string[] = []
+  const ownPids = [process.pid, process.ppid].filter((pid) => pid > 0)
+  try {
+    if (process.platform === 'win32') {
+      const encoded = Buffer.from(WINDOWS_PROCESS_SCRIPT, 'utf16le').toString('base64')
+      const result = await tidyRun('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeoutMs: 40000 })
+      if (result.code !== 0) {
+        notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
+        return { processes: [], notes }
+      }
+      return { processes: headlessProcesses(parseProcessJson(result.stdout), { ownPids }), notes }
+    }
+    const result = await tidyRun('ps', ['-eo', 'pid=,ppid=,etimes=,rss=,args='], { timeoutMs: 10000 })
+    if (result.code !== 0) {
+      notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
+      return { processes: [], notes }
+    }
+    const cwdOf = process.platform === 'linux' ? (pid: number) => fs.readlinkSync(`/proc/${pid}/cwd`) : undefined
+    return { processes: headlessProcesses(parsePsList(result.stdout), { ownPids, cwdOf }), notes }
+  } catch {
+    notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
+    return { processes: [], notes }
+  }
+}
+
+async function buildTidyReport(): Promise<TidyReport> {
+  const { findRepos, repoLeftovers } = await import('../src/core/tidy/git-leftovers')
+  const { findHeavyFolders, tempFolderRow } = await import('../src/core/tidy/space-hogs')
+  const roots = await allScanRoots()
+  const notes: string[] = []
+  const repoPaths = findRepos(roots)
+  const repos: TidyReport['repos'] = []
+  await eachWithLimit(repoPaths, 4, async (repo) => {
+    repos.push(await repoLeftovers(tidyRun, repo))
+  })
+  repos.sort((left, right) => left.repo.localeCompare(right.repo))
+  if (repos.length && repos.every((repo) => repo.failed)) notes.push('git 프로그램이 없거나 응답하지 않아서 프로젝트 상태를 못 읽었어요.')
+  const [jobs, processes] = await Promise.all([tidyJobs(), tidyProcesses()])
+  const heavy = findHeavyFolders(roots, { limit: 40, sizeBudget: 30000 })
+  const temp = tempFolderRow(os.tmpdir())
+  if (temp && temp.bytes >= 50 * 1024 * 1024) heavy.push(temp)
+  return {
+    scannedAt: Date.now(),
+    roots,
+    repos,
+    jobs: jobs.jobs,
+    processes: processes.processes,
+    heavy,
+    notes: [...notes, ...jobs.notes, ...processes.notes],
+  }
+}
+
+/** The report, reusing the last one unless a fresh look is asked for. Parallel asks share one scan. */
+async function tidyReport(refresh: boolean): Promise<TidyReport> {
+  if (!refresh && lastTidy) return lastTidy
+  if (!tidyInFlight) {
+    tidyInFlight = buildTidyReport().then((report) => {
+      lastTidy = report
+      return report
+    }).finally(() => {
+      tidyInFlight = null
+    })
+  }
+  return tidyInFlight
+}
+
+/** Paths the last report showed. Actions only ever touch these, never a path typed from outside. */
+function tidyKnownPaths(): Set<string> {
+  const out = new Set<string>()
+  if (!lastTidy) return out
+  for (const repo of lastTidy.repos) {
+    out.add(repo.repo)
+    for (const tree of repo.worktrees) out.add(tree.path)
+  }
+  for (const row of lastTidy.heavy) {
+    out.add(row.path)
+    if (row.project) out.add(row.project)
+  }
+  for (const proc of lastTidy.processes) if (proc.cwd) out.add(proc.cwd)
+  return out
+}
+
+ipcMain.handle('tidy:report', async (_event, refresh?: boolean) => tidyReport(Boolean(refresh)))
+
+ipcMain.handle('tidy:open', async (_event, target: string) => {
+  const resolved = path.resolve(String(target || ''))
+  if (!tidyKnownPaths().has(resolved)) return { ok: false, message: '그 폴더는 목록에 없어요.' }
+  if (!fs.existsSync(resolved)) return { ok: false, message: '이 폴더가 지금은 없어요. 옮겨졌거나 지워졌을 수 있어요.' }
+  const error = await shell.openPath(resolved)
+  return error ? { ok: false, message: '폴더를 열지 못했어요.' } : { ok: true, message: '' }
+})
+
+ipcMain.handle('tidy:stop', async (_event, pid: number) => {
+  const id = Number(pid)
+  const row = lastTidy?.processes.find((proc) => proc.pid === id)
+  if (!row) return { ok: false, message: '그 프로그램은 목록에 없어요. 다시 살펴본 뒤 눌러 주세요.' }
+  try {
+    if (process.platform === 'win32') {
+      const result = await tidyRun('taskkill', ['/PID', String(id), '/T', '/F'], { timeoutMs: 15000 })
+      if (result.code !== 0) return { ok: false, message: '끄지 못했어요. 관리자 권한이 필요할 수 있어요.' }
+    } else {
+      process.kill(id, 'SIGTERM')
+    }
+  } catch {
+    return { ok: false, message: '끄지 못했어요. 이미 꺼졌거나 권한이 없어요.' }
+  }
+  if (lastTidy) lastTidy = { ...lastTidy, processes: lastTidy.processes.filter((proc) => proc.pid !== id) }
+  recordActivity('tidy', '창 없이 켜져 있던 프로그램 끄기', row.summary)
+  return { ok: true, message: `${row.summary}을(를) 껐어요.` }
+})
+
+ipcMain.handle('tidy:trash', async (_event, target: string) => {
+  const resolved = path.resolve(String(target || ''))
+  const row = lastTidy?.heavy.find((entry) => entry.path === resolved)
+  if (!row) return { ok: false, message: '그 폴더는 목록에 없어요. 다시 살펴본 뒤 눌러 주세요.' }
+  if (row.kind === 'temp') return { ok: false, message: '임시 파일 폴더는 통째로 지우지 않아요. 폴더를 열어 직접 고르세요.' }
+  if (!fs.existsSync(resolved)) return { ok: false, message: '이미 없는 폴더예요.' }
+  try {
+    await shell.trashItem(resolved)
+  } catch {
+    return { ok: false, message: '휴지통으로 보내지 못했어요. 다른 프로그램이 쓰고 있을 수 있어요.' }
+  }
+  if (lastTidy) lastTidy = { ...lastTidy, heavy: lastTidy.heavy.filter((entry) => entry.path !== resolved) }
+  recordActivity('tidy', '자리만 차지하던 폴더 휴지통으로', resolved)
+  return { ok: true, message: '휴지통으로 보냈어요. 휴지통에서 되돌릴 수 있어요.' }
+})
+
+ipcMain.handle('tidy:pruneWorktrees', async (_event, repo: string) => {
+  const resolved = path.resolve(String(repo || ''))
+  const row = lastTidy?.repos.find((entry) => entry.repo === resolved)
+  if (!row) return { ok: false, message: '그 프로젝트는 목록에 없어요.' }
+  const { repoLeftovers } = await import('../src/core/tidy/git-leftovers')
+  try {
+    const result = await tidyRun('git', ['worktree', 'prune'], { cwd: resolved, timeoutMs: 15000 })
+    if (result.code !== 0) return { ok: false, message: '사라진 작업 폴더 기록을 지우지 못했어요.' }
+  } catch {
+    return { ok: false, message: '사라진 작업 폴더 기록을 지우지 못했어요.' }
+  }
+  const fresh = await repoLeftovers(tidyRun, resolved)
+  if (lastTidy) lastTidy = { ...lastTidy, repos: lastTidy.repos.map((entry) => (entry.repo === resolved ? fresh : entry)) }
+  recordActivity('tidy', '사라진 작업 폴더 기록 정리', resolved)
+  return { ok: true, message: '사라진 작업 폴더 기록을 지웠어요. 파일은 건드리지 않았어요.', repo: fresh }
+})
+
 ipcMain.handle('apiKeys:refreshUsage', async () => {
   const { fetchAllUsage } = await import('../src/core/agent-monitor/agent-monitor-store')
   const { listApiKeys, setKeyHealth } = await import('../src/core/api-keys/api-key-store')

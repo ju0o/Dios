@@ -114,6 +114,19 @@ code, pre, kbd, .mono { font-family: var(--ju-mono); }
 .scan-chip.is-count { color: var(--ju-paper); }
 @media (max-width: 640px) { .scan-row { grid-template-columns: 10px minmax(0, 1fr); } .scan-row-actions { grid-column: 2; justify-content: flex-start; } }
 
+/* 정리 rows: a title with a mono tag, nested worktree list, and an inline second question before anything destructive. */
+.tidy-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 16px; color: var(--ju-paper); }
+.tidy-branch { font-weight: 400; text-transform: none; letter-spacing: .04em; font-size: 11px; }
+.tidy-sub { list-style: none; margin: 6px 0 0; padding: 6px 0 0 12px; border-left: 2px solid var(--ju-line); display: flex; flex-direction: column; gap: 4px; }
+.tidy-sub li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.tidy-sub code { font-size: 12px; color: rgba(242,241,234,.8); overflow-wrap: anywhere; }
+.tidy-sub small { font-size: 12px; color: var(--ju-muted); }
+.tidy-sub .skill-link { min-height: 28px; font-size: 13px; }
+.tidy-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--ju-radius); border: 1px solid var(--ju-warn); background: var(--ju-warn-soft); }
+.tidy-confirm small { color: var(--ju-paper); font-size: 13px; }
+.tidy-danger { min-height: 36px; background: var(--ju-bad); color: var(--ju-black); font-weight: 600; }
+.tidy-danger:hover:not(:disabled) { background: #ffa59d; }
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
