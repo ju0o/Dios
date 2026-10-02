@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { checkInput, groupByProject, headline, maskSecret, usageLine } from '../src/core/api-keys/api-key-text'
-import { parseEnv, platformFor, scanMessage } from '../src/core/api-keys/env-scan'
+import { parseEnv, platformFor, rootLine, scanEnvRoots, scanMessage, shortRoot } from '../src/core/api-keys/env-scan'
 import { replaceEnvValue, writeEnvKey, restoreEnvBackup } from '../src/core/api-keys/env-write'
 import { checkSummary, healthFromStatus, healthFromUsageError, healthLabel, probeKey, probeTarget } from '../src/core/api-keys/key-health'
 
@@ -91,6 +91,39 @@ describe('env scan', () => {
     expect(scanMessage(0, 0, 0, 0, 0)).toContain('폴더가 없어요')
     expect(scanMessage(2, 0, 0, 0, 0)).toContain('.env')
     expect(scanMessage(2, 3, 2, 1, 3)).toBe('폴더 2개를 훑어서 키 3개를 찾았어요. 2개를 새로 등록했어요. 이미 있던 1개는 그대로예요.')
+  })
+
+  it('names the folder when only one or two were looked at', () => {
+    expect(shortRoot('C:\\Users\\user\\Desktop\\Projects\\')).toBe('Projects')
+    expect(shortRoot('/home/me/src')).toBe('src')
+    expect(scanMessage(1, 0, 0, 0, 0, ['C:\\Users\\user\\Desktop\\Projects'])).toBe('"Projects" 폴더를 훑었는데 설정 파일(.env)이 없어요.')
+    expect(scanMessage(2, 4, 1, 0, 1, ['/a/Projects', '/b/work'])).toBe('"Projects"와 "work" 폴더를 훑어서 키 1개를 찾았어요. 1개를 새로 등록했어요.')
+    expect(scanMessage(3, 4, 0, 0, 0, ['/a', '/b', '/c'])).toContain('폴더 3개')
+  })
+
+  it('describes each folder row in plain Korean', () => {
+    expect(rootLine({ root: '/x', exists: false, files: 0, found: 0, truncated: false })).toContain('없어요')
+    expect(rootLine({ root: '/x', exists: true, files: 0, found: 0, truncated: false })).toBe('설정 파일(.env)이 없어요.')
+    expect(rootLine({ root: '/x', exists: true, files: 2, found: 0, truncated: false })).toBe('설정 파일 2개 · API 키로 보이는 값은 없어요.')
+    expect(rootLine({ root: '/x', exists: true, files: 2, found: 3, truncated: false }, 1)).toBe('설정 파일 2개 · 키 3개 · 새로 1개')
+    expect(rootLine({ root: '/x', exists: true, files: 2, found: 3, truncated: true })).toContain('건너뛰었어요')
+  })
+
+  it('reports every root, reaches nested packages, and names the project folder', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dios-scan-'))
+    const deep = path.join(dir, 'Core', 'Dios', 'apps', 'web')
+    fs.mkdirSync(deep, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'Core', 'Dios', 'package.json'), '{}')
+    fs.writeFileSync(path.join(deep, '.env'), 'OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz\nPORT=3000\n')
+    fs.writeFileSync(path.join(deep, '.env.example'), 'OPENAI_API_KEY=your-key\n')
+    const missing = path.join(dir, 'gone')
+    const scanned = scanEnvRoots([dir, missing])
+    expect(scanned.folders).toBe(1)
+    expect(scanned.roots.map((report) => [report.exists, report.files, report.found])).toEqual([[true, 1, 1], [false, 0, 0]])
+    expect(scanned.findings).toHaveLength(1)
+    expect(scanned.findings[0].project).toBe('Dios')
+    expect(scanned.findings[0].root).toBe(dir)
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 

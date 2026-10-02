@@ -1247,10 +1247,14 @@ const deletedKeys = new Map<string, import('../src/core/api-keys/api-key-store')
 let envUndo: { keyId: string; file: string; backup: string; oldKey: string; project: string; platform: string; label: string; note: string } | null = null
 
 const SCAN_ROOTS_KEY = 'apiScanRoots'
+/** Default or project folders the Founder took out with 빼기. */
+const SCAN_EXCLUDED_KEY = 'apiScanExcluded'
 
-function readScanRoots(): string[] {
+type ScanOrigin = 'picked' | 'project' | 'default'
+
+function readPathList(key: string): string[] {
   try {
-    const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(SCAN_ROOTS_KEY) as { value_json?: string } | undefined
+    const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(key) as { value_json?: string } | undefined
     const parsed = row?.value_json ? JSON.parse(row.value_json) : []
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
   } catch {
@@ -1258,20 +1262,68 @@ function readScanRoots(): string[] {
   }
 }
 
-function writeScanRoots(roots: string[]): void {
+function writePathList(key: string, roots: string[]): void {
   getDatabase().prepare(`
     INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-  `).run(SCAN_ROOTS_KEY, JSON.stringify(roots), Date.now())
+  `).run(key, JSON.stringify(roots), Date.now())
 }
 
-/** Folders the scan looks at: the ones the Founder added, project folders, and common project homes. */
-async function allScanRoots(): Promise<string[]> {
+const readScanRoots = () => readPathList(SCAN_ROOTS_KEY)
+const writeScanRoots = (roots: string[]) => writePathList(SCAN_ROOTS_KEY, roots)
+
+/**
+ * Folders the scan looks at, with where each one came from: picked by the Founder,
+ * a connected project folder, or a common project home. Picked folders are kept even
+ * when missing so the screen can say "this folder is gone" instead of silently dropping it.
+ */
+async function scanRootEntries(): Promise<Array<{ root: string; origin: ScanOrigin }>> {
   const { defaultScanRoots } = await import('../src/core/api-keys/env-scan')
   const db = getDatabase()
+  const excluded = new Set(readPathList(SCAN_EXCLUDED_KEY).map((root) => path.resolve(root)))
   const connected = (db.prepare("SELECT path FROM project_connections WHERE kind = 'folder'").all() as Array<{ path: string }>).map((row) => row.path)
-  const roots = [...readScanRoots(), ...connected, ...defaultScanRoots(os.homedir())]
-  return [...new Set(roots.map((root) => path.resolve(root)))].filter((root) => fs.existsSync(root))
+  const out: Array<{ root: string; origin: ScanOrigin }> = []
+  const seen = new Set<string>()
+  const push = (raw: string, origin: ScanOrigin) => {
+    const root = path.resolve(raw)
+    if (seen.has(root) || excluded.has(root)) return
+    if (origin !== 'picked' && !fs.existsSync(root)) return
+    seen.add(root)
+    out.push({ root, origin })
+  }
+  for (const root of readScanRoots()) push(root, 'picked')
+  for (const root of connected) push(root, 'project')
+  for (const root of defaultScanRoots(os.homedir())) push(root, 'default')
+  return out
+}
+
+async function allScanRoots(): Promise<string[]> {
+  return (await scanRootEntries()).map((entry) => entry.root)
+}
+
+/** Scan the given roots (or every known root), register what was found, and describe each root. */
+async function runKeyScan(onlyRoots?: string[]) {
+  const { scanEnvRoots, scanMessage, rootLine } = await import('../src/core/api-keys/env-scan')
+  const { registerFindings } = await import('../src/core/api-keys/api-key-store')
+  const known = await allScanRoots()
+  const wanted = onlyRoots && onlyRoots.length ? onlyRoots.map((root) => path.resolve(String(root))) : known
+  const scanned = scanEnvRoots(wanted)
+  const registered = registerFindings(getDatabase(), secretLock, scanned.findings)
+  for (const id of registered.added) await syncUsageService(id)
+  if (registered.added.length) recordActivity('apiKey', '프로젝트 폴더에서 API 키 찾아 등록', `${registered.added.length}개`)
+  const roots = scanned.roots.map((report) => ({
+    ...report,
+    added: registered.addedByRoot[report.root] ?? 0,
+    line: rootLine(report, registered.addedByRoot[report.root] ?? 0),
+  }))
+  return {
+    ok: true,
+    message: scanMessage(scanned.folders, scanned.files, registered.added.length, registered.kept, scanned.findings.length, wanted),
+    added: registered.added.length,
+    roots,
+    scannedAt: Date.now(),
+    listing: await keyListing(),
+  }
 }
 
 /**
@@ -1302,12 +1354,14 @@ async function keyListing() {
   const db = getDatabase()
   const projectRows = db.prepare('SELECT name FROM projects ORDER BY name').all() as Array<{ name: string }>
   const usage = getCachedUsage()
+  const entries = await scanRootEntries()
   return {
     cards: listApiKeys(db),
     projects: knownProjects(db, projectRows.map((row) => row.name)),
     locked: secretLock.available(),
     usage: usage.ok ? usage.data ?? [] : [],
-    scanRoots: await allScanRoots(),
+    scanRoots: entries.map((entry) => entry.root),
+    scanRootOrigins: Object.fromEntries(entries.map((entry) => [entry.root, entry.origin])),
   }
 }
 
@@ -1426,34 +1480,55 @@ ipcMain.handle('apiKeys:peekAll', async () => {
   return revealAllApiKeys(getDatabase(), secretLock)
 })
 
-ipcMain.handle('apiKeys:scan', async () => {
-  const { scanEnvRoots, scanMessage } = await import('../src/core/api-keys/env-scan')
-  const { registerFindings } = await import('../src/core/api-keys/api-key-store')
-  const roots = await allScanRoots()
-  const scanned = scanEnvRoots(roots)
-  const registered = registerFindings(getDatabase(), secretLock, scanned.findings)
-  for (const id of registered.added) await syncUsageService(id)
-  if (registered.added.length) recordActivity('apiKey', '프로젝트 폴더에서 API 키 찾아 등록', `${registered.added.length}개`)
-  return {
-    ok: true,
-    message: scanMessage(scanned.folders, scanned.files, registered.added.length, registered.kept, scanned.findings.length),
-    added: registered.added.length,
-    listing: await keyListing(),
-  }
+/** Scan every known folder, or only the ones passed in (one row's "이 폴더만 훑기"). */
+ipcMain.handle('apiKeys:scan', async (_event, onlyRoots?: unknown) => {
+  const roots = Array.isArray(onlyRoots) ? onlyRoots.map(String).filter(Boolean) : undefined
+  return runKeyScan(roots)
+})
+
+/** Let the Founder pick one or more folders, remember them, and scan just those right away. */
+ipcMain.handle('apiKeys:scanPick', async () => {
+  const picked = await dialog.showOpenDialog({ title: '키를 찾을 프로젝트 폴더 고르기 (여러 개 가능)', properties: ['openDirectory', 'multiSelections'] })
+  if (picked.canceled || !picked.filePaths.length) return { ok: false, message: '', added: 0, roots: [], scannedAt: 0, listing: await keyListing() }
+  const chosen = picked.filePaths.map((file) => path.resolve(file))
+  const roots = readScanRoots()
+  const excluded = readPathList(SCAN_EXCLUDED_KEY)
+  writeScanRoots([...new Set([...roots, ...chosen])])
+  writePathList(SCAN_EXCLUDED_KEY, excluded.filter((root) => !chosen.includes(path.resolve(root))))
+  return runKeyScan(chosen)
 })
 
 ipcMain.handle('apiKeys:addScanRoot', async () => {
-  const picked = await dialog.showOpenDialog({ title: '훑을 프로젝트 폴더 고르기', properties: ['openDirectory'] })
-  if (picked.canceled || !picked.filePaths[0]) return { ok: false, message: '', listing: await keyListing() }
+  const picked = await dialog.showOpenDialog({ title: '훑을 프로젝트 폴더 고르기', properties: ['openDirectory', 'multiSelections'] })
+  if (picked.canceled || !picked.filePaths.length) return { ok: false, message: '', listing: await keyListing() }
   const roots = readScanRoots()
-  const next = path.resolve(picked.filePaths[0])
-  if (!roots.includes(next)) writeScanRoots([...roots, next])
-  return { ok: true, message: '폴더를 추가했어요. 훑기를 누르면 그 안의 키도 찾아요.', listing: await keyListing() }
+  const chosen = picked.filePaths.map((file) => path.resolve(file))
+  writeScanRoots([...new Set([...roots, ...chosen])])
+  writePathList(SCAN_EXCLUDED_KEY, readPathList(SCAN_EXCLUDED_KEY).filter((root) => !chosen.includes(path.resolve(root))))
+  return { ok: true, message: chosen.length === 1 ? '폴더를 추가했어요. 훑기를 누르면 그 안의 키도 찾아요.' : `폴더 ${chosen.length}개를 추가했어요. 훑기를 누르면 그 안의 키도 찾아요.`, listing: await keyListing() }
 })
 
+/** 빼기 works for every row: picked folders are forgotten, default/project folders are excluded. */
 ipcMain.handle('apiKeys:removeScanRoot', async (_event, root: string) => {
-  writeScanRoots(readScanRoots().filter((item) => item !== String(root)))
+  const target = path.resolve(String(root || ''))
+  const picked = readScanRoots()
+  if (picked.some((item) => path.resolve(item) === target)) {
+    writeScanRoots(picked.filter((item) => path.resolve(item) !== target))
+  } else {
+    const excluded = readPathList(SCAN_EXCLUDED_KEY)
+    if (!excluded.some((item) => path.resolve(item) === target)) writePathList(SCAN_EXCLUDED_KEY, [...excluded, target])
+  }
   return { ok: true, message: '그 폴더는 더 훑지 않아요.', listing: await keyListing() }
+})
+
+/** Open a scan folder in the file manager so the Founder can see what DIOS looked at. */
+ipcMain.handle('apiKeys:openScanRoot', async (_event, root: string) => {
+  const target = path.resolve(String(root || ''))
+  const known = await allScanRoots()
+  if (!known.includes(target)) return { ok: false, message: '그 폴더는 훑는 목록에 없어요.' }
+  if (!fs.existsSync(target)) return { ok: false, message: '이 폴더가 지금은 없어요. 옮겨졌거나 지워졌을 수 있어요.' }
+  const error = await shell.openPath(target)
+  return error ? { ok: false, message: '폴더를 열지 못했어요.' } : { ok: true, message: '' }
 })
 
 ipcMain.handle('apiKeys:refreshUsage', async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { workHeadline, type OpenTask, type PastTask } from '../../core/founder-work/parse-gate'
+import { WORK_HOLD_LINE, isWorkListOn } from '../../core/founder-work/work-hold'
 import { whenText } from './skill-board-api'
 
 interface FounderWork {
@@ -57,6 +58,7 @@ export function FounderWorkView() {
   const [pastOpen, setPastOpen] = useState(false)
   const [seen, setSeen] = useState<Set<string>>(() => readSeen())
   const seenTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const held = !isWorkListOn(typeof window === 'undefined' ? null : window.localStorage)
 
   const apply = useCallback((listed: FounderWork) => {
     setWork(listed)
@@ -161,6 +163,7 @@ export function FounderWorkView() {
 
   return (
     <section className="skill-board" aria-label="지금 할 일">
+      {held && <p className="notice-line" role="status">{WORK_HOLD_LINE}</p>}
       <header className="skill-top">
         <div>
           <p className="skill-lead">{failed || workHeadline(aside.length, founder.length)}</p>

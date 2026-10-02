@@ -197,9 +197,10 @@ export function knownProjects(db: Database.Database, extra: string[] = []): stri
  * Register what a folder scan found. A key already registered at the same spot is left alone,
  * even when its value differs, so a hand-edited entry is never overwritten by a stale .env.
  */
-export function registerFindings(db: Database.Database, lock: SecretLock, findings: EnvFinding[]): { added: string[]; kept: number } {
+export function registerFindings(db: Database.Database, lock: SecretLock, findings: EnvFinding[]): { added: string[]; kept: number; addedByRoot: Record<string, number> } {
   ensureApiKeyTable(db)
   const added: string[] = []
+  const addedByRoot: Record<string, number> = {}
   let kept = 0
   for (const finding of findings) {
     const dup = db.prepare('SELECT id FROM api_keys WHERE project = ? AND platform = ? AND label = ?').get(finding.project, finding.platform, finding.label)
@@ -208,9 +209,12 @@ export function registerFindings(db: Database.Database, lock: SecretLock, findin
       continue
     }
     const result = addApiKey(db, lock, { project: finding.project, platform: finding.platform, label: finding.label, key: finding.key, note: '' }, finding.source)
-    if (result.ok) added.push(result.id)
+    if (result.ok) {
+      added.push(result.id)
+      addedByRoot[finding.root] = (addedByRoot[finding.root] ?? 0) + 1
+    }
   }
-  return { added, kept }
+  return { added, kept, addedByRoot }
 }
 
 /** Remember the last liveness check. An empty state means "not checked". */

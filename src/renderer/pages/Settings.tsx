@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { isWorkListOn, setWorkListOn } from '../../core/founder-work/work-hold'
 
 const DEFAULT_SETTINGS = {
   autoScan: true,
@@ -13,6 +14,14 @@ export function Settings() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [workOn, setWorkOn] = useState(() => isWorkListOn(typeof window === 'undefined' ? null : window.localStorage))
+
+  /** 지금 할 일 is parked by default; this switch brings it back to the first screen and main menu. */
+  function toggleWork(on: boolean) {
+    setWorkListOn(window.localStorage, on)
+    setWorkOn(on)
+    window.dispatchEvent(new Event('dios:work-hold'))
+  }
 
   useEffect(() => {
     async function loadSettings() {
@@ -60,9 +69,18 @@ export function Settings() {
 
   return (
     <div className="p-8">
-      <h1 className="text-3xl font-bold text-white mb-8">⚙️ 설정</h1>
+      <h1 className="text-3xl font-bold text-white mb-8">설정</h1>
       
       <div className="space-y-6 max-w-2xl">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <h2 className="text-xl font-bold text-white mb-2">화면</h2>
+          <p className="text-sm text-gray-400 mb-4">지금 할 일 화면은 목록이 스스로 정리되지 않아 잠시 쉬고 있어요. 켜면 첫 화면과 왼쪽 메뉴에 다시 나와요.</p>
+          <label className="flex items-center gap-3">
+            <input type="checkbox" checked={workOn} onChange={(e) => toggleWork(e.target.checked)} className="w-5 h-5" />
+            <span className="text-white">지금 할 일 화면 켜기</span>
+          </label>
+        </div>
+
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
           <h2 className="text-xl font-bold text-white mb-4">스캔 설정</h2>
           
@@ -136,9 +154,9 @@ export function Settings() {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-6 py-3 rounded-lg font-semibold transition"
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-bg disabled:text-text-muted px-6 py-3 rounded-lg font-semibold transition"
         >
-          {saving ? '저장 중...' : saved ? '✅ 저장 완료!' : '설정 저장'}
+          {saving ? '저장 중...' : saved ? '저장했어요' : '설정 저장'}
         </button>
         {error && <p className="text-sm text-red-300">{error}</p>}
         <p className="text-xs text-gray-500">설정은 이 컴퓨터의 DIOS 데이터베이스에 저장됩니다. API 키는 연동 화면에서 로컬 저장 여부를 확인하세요.</p>

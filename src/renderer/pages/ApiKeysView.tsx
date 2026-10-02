@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { OTHER_PLATFORM, PLATFORMS, USAGE_TYPES, groupByProject, headline, usageLine, type ApiKeyCard, type ApiKeyInput } from '../../core/api-keys/api-key-text'
 import { healthLabel } from '../../core/api-keys/key-health'
-import { apiKeysApi, type KeyListing, type KeyResult } from './api-keys-api'
+import { apiKeysApi, type KeyListing, type KeyResult, type ScanOrigin, type ScanResult, type ScanRootResult } from './api-keys-api'
 import { whenText } from './skill-board-api'
 
 type Notice = { ok: boolean; text: string; undoId?: string; undoEnv?: boolean } | null
@@ -9,6 +9,9 @@ type Notice = { ok: boolean; text: string; undoId?: string; undoEnv?: boolean } 
 const EMPTY_FORM: ApiKeyInput = { project: '', platform: PLATFORMS[0], label: '', key: '', note: '' }
 const SHOW_ALL_KEY = 'dios.apiKeys.showAll'
 const SCANNED_KEY = 'dios.apiKeys.scannedOnce'
+const EMPTY_LISTING: KeyListing = { cards: [], projects: [], locked: true, usage: [], scanRoots: [], scanRootOrigins: {} }
+
+const ORIGIN_LABEL: Record<ScanOrigin, string> = { picked: '직접 고른 폴더', project: '연동한 프로젝트 폴더', default: '흔히 쓰는 프로젝트 폴더' }
 
 function remembered(key: string): boolean {
   try {
@@ -46,13 +49,15 @@ export function ApiKeysView() {
   const [open, setOpen] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(() => remembered(SHOW_ALL_KEY))
   const [filter, setFilter] = useState('')
-  const [foldersOpen, setFoldersOpen] = useState(false)
+  /** Per-folder outcome of the last scan, keyed by folder, so each row says what happened there. */
+  const [lastScan, setLastScan] = useState<{ at: number; rows: Record<string, ScanRootResult> }>({ at: 0, rows: {} })
+  const [scanningRoot, setScanningRoot] = useState('')
 
   const load = useCallback(async () => {
     const api = apiKeysApi()
     if (!api) {
       setFailed('이 화면은 Dios 앱에서 열려요.')
-      setListing({ cards: [], projects: [], locked: true, usage: [], scanRoots: [] })
+      setListing(EMPTY_LISTING)
       return
     }
     try {
@@ -60,8 +65,16 @@ export function ApiKeysView() {
       setFailed('')
     } catch {
       setFailed('키 목록을 읽지 못했어요.')
-      setListing({ cards: [], projects: [], locked: true, usage: [], scanRoots: [] })
+      setListing(EMPTY_LISTING)
     }
+  }, [])
+
+  const takeScan = useCallback((result: ScanResult, quiet: boolean) => {
+    setListing(result.listing)
+    if (result.scannedAt) {
+      setLastScan((current) => ({ at: result.scannedAt, rows: { ...current.rows, ...Object.fromEntries(result.roots.map((row) => [row.root, row])) } }))
+    }
+    if (result.message && (!quiet || result.added > 0)) setNotice({ ok: result.ok, text: result.message })
   }, [])
 
   const revealAll = useCallback(async () => {
@@ -74,20 +87,35 @@ export function ApiKeysView() {
     }
   }, [])
 
-  const scan = useCallback(async (quiet: boolean) => {
+  /** Scan every known folder (quiet on the first visit), or only one folder from its row. */
+  const scan = useCallback(async (quiet: boolean, onlyRoot?: string) => {
     const api = apiKeysApi()
     if (!api) return
     setScanning(true)
+    setScanningRoot(onlyRoot ?? '')
     try {
-      const result = await api.apiKeysScan()
-      setListing(result.listing)
-      if (!quiet || result.added > 0) setNotice({ ok: result.ok, text: result.message })
+      takeScan(await api.apiKeysScan(onlyRoot ? [onlyRoot] : undefined), quiet)
     } catch {
       if (!quiet) setNotice({ ok: false, text: '폴더를 훑지 못했어요. 다시 시도해 주세요.' })
     } finally {
       setScanning(false)
+      setScanningRoot('')
     }
-  }, [])
+  }, [takeScan])
+
+  /** The Founder picks folders; those are remembered and scanned right away. */
+  const pickAndScan = useCallback(async () => {
+    const api = apiKeysApi()
+    if (!api) return
+    setScanning(true)
+    try {
+      takeScan(await api.apiKeysScanPick(), false)
+    } catch {
+      setNotice({ ok: false, text: '폴더를 고르지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setScanning(false)
+    }
+  }, [takeScan])
 
   useEffect(() => { void load() }, [load])
 
@@ -243,28 +271,31 @@ export function ApiKeysView() {
     if (!next) setOpen({})
   }
 
-  async function addFolder() {
-    const api = apiKeysApi()
-    if (!api) return
-    try {
-      const result = await api.apiKeysAddScanRoot()
-      setListing(result.listing)
-      if (result.message) setNotice({ ok: result.ok, text: result.message })
-      if (result.ok) void scan(false)
-    } catch {
-      setNotice({ ok: false, text: '폴더를 추가하지 못했어요.' })
-    }
-  }
-
   async function dropFolder(root: string) {
     const api = apiKeysApi()
     if (!api) return
     try {
       const result = await api.apiKeysRemoveScanRoot(root)
       setListing(result.listing)
+      setLastScan((current) => {
+        const rows = { ...current.rows }
+        delete rows[root]
+        return { ...current, rows }
+      })
       setNotice({ ok: result.ok, text: result.message })
     } catch {
       setNotice({ ok: false, text: '폴더를 빼지 못했어요.' })
+    }
+  }
+
+  async function openFolder(root: string) {
+    const api = apiKeysApi()
+    if (!api) return
+    try {
+      const result = await api.apiKeysOpenScanRoot(root)
+      if (!result.ok) setNotice({ ok: false, text: result.message })
+    } catch {
+      setNotice({ ok: false, text: '폴더를 열지 못했어요.' })
     }
   }
 
@@ -295,7 +326,7 @@ export function ApiKeysView() {
     )
   }
 
-  const { cards, projects, locked, usage, scanRoots } = listing
+  const { cards, projects, locked, usage, scanRoots, scanRootOrigins } = listing
   const query = filter.trim().toLowerCase()
   const shown = query
     ? cards.filter((card) => [card.project, card.platform, card.label, card.note].some((text) => text.toLowerCase().includes(query)))
@@ -312,9 +343,14 @@ export function ApiKeysView() {
           <button type="button" className="skill-action primary" onClick={() => (formOpen && !editingId ? closeForm() : openNew())}>
             {formOpen && !editingId ? '등록 닫기' : '새 키 등록'}
           </button>
-          <button type="button" className="skill-action" disabled={scanning} onClick={() => void scan(false)}>
-            {scanning ? '폴더를 훑는 중…' : '프로젝트 폴더에서 키 찾기'}
+          <button type="button" className="skill-action" disabled={scanning} onClick={() => void pickAndScan()}>
+            {scanning && !scanningRoot ? '폴더를 훑는 중…' : '폴더 골라서 키 찾기'}
           </button>
+          {scanRoots.length > 0 && (
+            <button type="button" className="skill-action" disabled={scanning} onClick={() => void scan(false)}>
+              {`아래 폴더 ${scanRoots.length}곳 모두 훑기`}
+            </button>
+          )}
           {cards.length > 0 && (
             <button type="button" className="skill-action" disabled={checking} onClick={() => void checkKeys()}>
               {checking ? '키를 확인하는 중…' : '키 상태 확인'}
@@ -331,19 +367,43 @@ export function ApiKeysView() {
         </div>
       </header>
 
-      <details className="skill-raw" open={foldersOpen} onToggle={(event) => setFoldersOpen((event.target as HTMLDetailsElement).open)}>
-        <summary>훑는 폴더 {scanRoots.length}곳</summary>
-        <p className="skill-quiet">이 폴더들 안의 .env 파일에서 API 키를 찾아 자동으로 등록해요. 프로젝트 폴더가 다른 곳에 있으면 추가해 주세요.</p>
-        <ul className="key-folders">
-          {scanRoots.map((root) => (
-            <li key={root}>
-              <code>{root}</code>
-              <button type="button" className="skill-link" onClick={() => void dropFolder(root)}>빼기</button>
-            </li>
-          ))}
-        </ul>
-        <button type="button" className="skill-action" onClick={() => void addFolder()}>폴더 추가</button>
-      </details>
+      <section className="skill-card scan-report" aria-label="훑는 폴더와 결과">
+        <header className="scan-report-head">
+          <b>{scanRoots.length ? `훑는 폴더 ${scanRoots.length}곳` : '아직 훑는 폴더가 없어요'}</b>
+          {lastScan.at > 0 && <small>마지막 훑기 {whenText(lastScan.at)}</small>}
+        </header>
+        <div className="scan-pick">
+          <p className="skill-quiet">
+            {scanRoots.length
+              ? '폴더마다 어디를 훑었고 무엇이 나왔는지 그대로 보여요. 프로젝트가 다른 곳에 있으면 위의 "폴더 골라서 키 찾기"로 그 폴더를 바로 고르세요.'
+              : '위의 "폴더 골라서 키 찾기"를 눌러 프로젝트 폴더를 고르면, 그 안의 .env 파일에서 API 키를 찾아 등록해요.'}
+          </p>
+        </div>
+        {scanRoots.length > 0 && (
+          <ul className="scan-rows">
+            {scanRoots.map((root) => {
+              const row = lastScan.rows[root]
+              const state = !row ? '' : !row.exists ? 'is-missing' : row.found > 0 ? 'is-found' : 'is-empty'
+              const busyHere = scanning && scanningRoot === root
+              return (
+                <li key={root} className={`scan-row ${state}`}>
+                  <i aria-hidden="true" />
+                  <div className="scan-row-main">
+                    <code>{root}</code>
+                    <small>{ORIGIN_LABEL[scanRootOrigins[root] ?? 'default']}</small>
+                    <small className="is-why">{busyHere ? '지금 훑는 중…' : row ? row.line : '아직 안 훑었어요.'}</small>
+                  </div>
+                  <div className="scan-row-actions">
+                    <button type="button" className="skill-link" disabled={scanning} onClick={() => void scan(false, root)}>이 폴더만 훑기</button>
+                    <button type="button" className="skill-link" onClick={() => void openFolder(root)}>열기</button>
+                    <button type="button" className="skill-link" onClick={() => void dropFolder(root)}>빼기</button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
 
       {!locked && cards.length > 0 && (
         <p className="skill-quiet" role="status">이 컴퓨터는 키 잠금을 지원하지 않아서 키가 그대로 저장돼요. 혼자 쓰는 컴퓨터라면 괜찮아요.</p>
@@ -447,7 +507,7 @@ export function ApiKeysView() {
 
       {cards.length === 0 && !formOpen && (
         <p className="skill-quiet">
-          등록하면 어느 프로젝트가 어떤 플랫폼과 이어져 있는지 한눈에 보여요. 위의 "프로젝트 폴더에서 키 찾기"를 누르면 .env 파일에 있는 키를 자동으로 모아 와요.
+          등록하면 어느 프로젝트가 어떤 플랫폼과 이어져 있는지 한눈에 보여요. 위의 "폴더 골라서 키 찾기"로 프로젝트 폴더를 고르면 .env 파일에 있는 키를 모아 와요.
         </p>
       )}
     </section>

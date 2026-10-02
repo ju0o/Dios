@@ -1,8 +1,12 @@
 import type { ApiKeyCard, ApiKeyInput } from '../../core/api-keys/api-key-text'
 import type { KeyResult } from '../../core/api-keys/api-key-store'
+import type { RootReport } from '../../core/api-keys/env-scan'
 import type { AgentUsageSnapshot } from '../../core/agent-monitor/types'
 
-export type { ApiKeyCard, ApiKeyInput, KeyResult }
+export type { ApiKeyCard, ApiKeyInput, KeyResult, RootReport }
+
+/** Where a scan folder came from: the Founder picked it, it is a connected project, or it is a common home. */
+export type ScanOrigin = 'picked' | 'project' | 'default'
 
 export interface KeyListing {
   cards: ApiKeyCard[]
@@ -14,12 +18,28 @@ export interface KeyListing {
   usage: AgentUsageSnapshot[]
   /** Folders the scan looks through. */
   scanRoots: string[]
+  /** Origin per folder in `scanRoots`. */
+  scanRootOrigins: Record<string, ScanOrigin>
 }
 
 export interface ListingResult {
   ok: boolean
   message: string
   listing: KeyListing
+}
+
+/** One scan folder after a scan, with a plain Korean line for the row. */
+export interface ScanRootResult extends RootReport {
+  /** Keys from this folder that were new in the store. */
+  added: number
+  line: string
+}
+
+export interface ScanResult extends ListingResult {
+  added: number
+  roots: ScanRootResult[]
+  /** Epoch ms; 0 when nothing was scanned (e.g. the folder dialog was closed). */
+  scannedAt: number
 }
 
 /** API key calls exposed by the Electron preload. */
@@ -34,9 +54,13 @@ export interface ApiKeysApi {
   apiKeysCopy: (id: string) => Promise<{ ok: boolean; message: string }>
   apiKeysPeek: (id: string) => Promise<{ ok: boolean; message: string; key: string }>
   apiKeysPeekAll: () => Promise<Record<string, string>>
-  apiKeysScan: () => Promise<ListingResult & { added: number }>
+  /** Scan every known folder, or only `onlyRoots`. */
+  apiKeysScan: (onlyRoots?: string[]) => Promise<ScanResult>
+  /** Open the folder dialog, remember the picked folders, and scan just those. */
+  apiKeysScanPick: () => Promise<ScanResult>
   apiKeysAddScanRoot: () => Promise<ListingResult>
   apiKeysRemoveScanRoot: (root: string) => Promise<ListingResult>
+  apiKeysOpenScanRoot: (root: string) => Promise<{ ok: boolean; message: string }>
   apiKeysRefreshUsage: () => Promise<ListingResult>
 }
 

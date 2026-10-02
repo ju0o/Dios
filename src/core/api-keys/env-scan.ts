@@ -11,13 +11,29 @@ export interface EnvFinding {
   key: string
   /** The .env file it came from. Shown only under 원문 보기. */
   source: string
+  /** The scan root this file was found under, so the screen can say which folder produced it. */
+  root: string
+}
+
+/** What happened in one scan root. The Founder sees one row per root. */
+export interface RootReport {
+  root: string
+  /** False when the folder is gone (moved, renamed, or on a drive that is not plugged in). */
+  exists: boolean
+  /** .env files read under this root. */
+  files: number
+  /** Keys that looked like API keys, before dedupe against the store. */
+  found: number
+  /** True when the walk hit the file ceiling, so some .env files were not read. */
+  truncated: boolean
 }
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-electron', 'release', 'build', 'out', '.next', '.venv', 'venv', '__pycache__', 'target', '.cache', 'coverage', '.idea', '.vscode'])
 const SKIP_ENV = /\.(example|sample|template|dist|defaults?)$/i
 const ENV_FILE = /^\.env(\..+)?$/
-const MAX_DEPTH = 3
-const MAX_FILES = 400
+/** Deep enough for ~/Projects/<group>/<project>/<apps>/<web>/.env. */
+export const MAX_DEPTH = 5
+export const MAX_FILES = 600
 const PLACEHOLDER = /^(your[-_ ]?|<|xxx|changeme|replace|sk-\.\.\.|\.\.\.|todo|none|null|\$\{)/i
 
 /** Variable name patterns, most specific first. */
@@ -118,9 +134,14 @@ export function parseEnv(text: string): Array<{ name: string; value: string }> {
   return out
 }
 
-/** Keys found under the given folders. Each finding says which project folder it belongs to. */
-export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: number; folders: number } {
+/**
+ * Keys found under the given folders. Each finding says which project folder and which
+ * scan root it belongs to, and `roots` reports every root — including ones that no longer exist —
+ * so the screen can show exactly where DIOS looked.
+ */
+export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: number; folders: number; roots: RootReport[] } {
   const findings: EnvFinding[] = []
+  const reports: RootReport[] = []
   let files = 0
   let folders = 0
   const seen = new Set<string>()
@@ -129,16 +150,24 @@ export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: 
     try {
       real = fs.realpathSync(root)
     } catch {
+      reports.push({ root, exists: false, files: 0, found: 0, truncated: false })
       continue
     }
     if (seen.has(real)) continue
     seen.add(real)
     folders += 1
     const envFiles: string[] = []
-    walk(real, 0, envFiles)
+    const walked = { truncated: false }
+    walk(real, 0, envFiles, walked)
+    let rootFiles = 0
+    let rootFound = 0
     for (const file of envFiles) {
-      if (files >= MAX_FILES) break
+      if (files >= MAX_FILES) {
+        walked.truncated = true
+        break
+      }
       files += 1
+      rootFiles += 1
       const project = projectNameFor(real, file)
       let text = ''
       try {
@@ -149,22 +178,46 @@ export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: 
       for (const entry of parseEnv(text)) {
         const platform = platformFor(entry.name, entry.value)
         if (!platform) continue
-        findings.push({ project, platform, label: entry.name, key: entry.value, source: file })
+        rootFound += 1
+        findings.push({ project, platform, label: entry.name, key: entry.value, source: file, root })
       }
     }
+    reports.push({ root, exists: true, files: rootFiles, found: rootFound, truncated: walked.truncated })
   }
-  return { findings: dedupe(findings), files, folders }
+  return { findings: dedupe(findings), files, folders, roots: reports }
 }
 
-/** One line after a scan, without paths. */
-export function scanMessage(folders: number, files: number, added: number, kept: number, found: number): string {
-  if (!folders) return '훑을 프로젝트 폴더가 없어요. 아래에서 폴더를 추가해 주세요.'
-  if (!files) return `폴더 ${folders}개를 훑었는데 설정 파일(.env)이 없어요.`
-  if (!found) return `폴더 ${folders}개, 설정 파일 ${files}개를 훑었는데 API 키로 보이는 값이 없어요.`
-  const parts = [`폴더 ${folders}개를 훑어서 키 ${found}개를 찾았어요.`]
+/** Last folder name of a path, for messages that name a folder without the whole path. */
+export function shortRoot(root: string): string {
+  const trimmed = root.replace(/[\\/]+$/, '')
+  const parts = trimmed.split(/[\\/]/)
+  return parts[parts.length - 1] || trimmed
+}
+
+/**
+ * One line after a scan. When only one or two folders were looked at, they are named,
+ * so "폴더 1개를 훑었는데 없어요" never leaves the Founder guessing which one.
+ */
+export function scanMessage(folders: number, files: number, added: number, kept: number, found: number, roots: string[] = []): string {
+  const named = roots.length > 0 && roots.length <= 2 ? `${roots.map((root) => `"${shortRoot(root)}"`).join('와 ')} 폴더` : `폴더 ${folders}개`
+  if (!folders) return '훑을 프로젝트 폴더가 없어요. 아래에서 폴더를 골라 주세요.'
+  if (!files) return `${named}를 훑었는데 설정 파일(.env)이 없어요.`
+  if (!found) return `${named}, 설정 파일 ${files}개를 훑었는데 API 키로 보이는 값이 없어요.`
+  const parts = [`${named}를 훑어서 키 ${found}개를 찾았어요.`]
   if (added) parts.push(`${added}개를 새로 등록했어요.`)
   if (kept) parts.push(`이미 있던 ${kept}개는 그대로예요.`)
   return parts.join(' ')
+}
+
+/** Plain Korean for one root row. `added` is how many keys from this root were new in the store. */
+export function rootLine(report: RootReport, added = 0): string {
+  if (!report.exists) return '이 폴더가 지금은 없어요. 옮겨졌거나 지워졌을 수 있어요.'
+  if (!report.files) return '설정 파일(.env)이 없어요.'
+  if (!report.found) return `설정 파일 ${report.files}개 · API 키로 보이는 값은 없어요.`
+  const parts = [`설정 파일 ${report.files}개 · 키 ${report.found}개`]
+  if (added) parts.push(`새로 ${added}개`)
+  if (report.truncated) parts.push('너무 깊거나 많아서 일부는 건너뛰었어요')
+  return parts.join(' · ')
 }
 
 /** Folders that usually hold projects. Only those that exist are returned. */
@@ -179,8 +232,12 @@ export function defaultScanRoots(home: string): string[] {
   })
 }
 
-function walk(dir: string, depth: number, out: string[]): void {
-  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return
+function walk(dir: string, depth: number, out: string[], state: { truncated: boolean }): void {
+  if (depth > MAX_DEPTH) return
+  if (out.length >= MAX_FILES) {
+    state.truncated = true
+    return
+  }
   let entries: fs.Dirent[]
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -188,12 +245,15 @@ function walk(dir: string, depth: number, out: string[]): void {
     return
   }
   for (const entry of entries) {
-    if (out.length >= MAX_FILES) return
+    if (out.length >= MAX_FILES) {
+      state.truncated = true
+      return
+    }
     if (entry.isSymbolicLink()) continue
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || (entry.name.startsWith('.') && entry.name !== '.config')) continue
-      walk(full, depth + 1, out)
+      walk(full, depth + 1, out, state)
       continue
     }
     if (entry.isFile() && ENV_FILE.test(entry.name) && !SKIP_ENV.test(entry.name)) out.push(full)

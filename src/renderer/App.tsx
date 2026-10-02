@@ -32,16 +32,30 @@ import { WhatsNewLine } from './components/WhatsNewLine'
 import type { StartLook } from '../core/start/welcome'
 import { CommandPalette } from './components/CommandPalette'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
+import { PixelField } from './brand/PixelField'
+import { SignalMark } from './brand/SignalMark'
+import { WORK_HOLD_KEY, firstView, isWorkListOn } from '../core/founder-work/work-hold'
 
 type ViewType = 'now' | 'skillBoard' | 'apiKeys' | 'agentMonitor' | 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'timeline' | 'aiResources' | 'decisions' | 'experiments' | 'humanGates'
 
-const primaryNav: Array<{ id: ViewType; label: string; icon: string }> = [
-  { id: 'now', label: '지금 할 일', icon: '☐' },
+interface NavItem { id: ViewType; label: string; icon: string; hold?: boolean }
+
+const WORK_NAV: NavItem = { id: 'now', label: '지금 할 일', icon: '☐' }
+
+const primaryNavBase: NavItem[] = [
   { id: 'skillBoard', label: '스킬 보드', icon: '✧' },
   { id: 'skills', label: '스킬 라이브러리', icon: '✦' },
   { id: 'apiKeys', label: 'API 키 관리', icon: '⚿' },
   { id: 'agentMonitor', label: '사용량', icon: '◔' },
 ]
+
+function storage(): Storage | null {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
 
 const WELCOME_KEY = 'dios.welcome.seen'
 
@@ -61,7 +75,7 @@ function markWelcomeSeen(): void {
   }
 }
 
-const moreNav: Array<{ id: ViewType; label: string; icon: string }> = [
+const moreNavBase: NavItem[] = [
   { id: 'home', label: '프로젝트 홈', icon: '⌂' },
   { id: 'changes', label: '변경사항', icon: '⌁' },
   { id: 'files', label: '자료 스캔', icon: '⌗' },
@@ -89,8 +103,24 @@ const SCREEN_TITLES: Partial<Record<ViewType, string>> = {
 }
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ViewType>('now')
+  const [workOn, setWorkOn] = useState(() => isWorkListOn(storage()))
+  const [currentView, setCurrentView] = useState<ViewType>(() => firstView(isWorkListOn(storage())))
   const [moreOpen, setMoreOpen] = useState(false)
+  // 지금 할 일 sits in the main menu only while it is switched on; otherwise it waits under 더 보기 with a 보류 tag.
+  const primaryNav: NavItem[] = workOn ? [WORK_NAV, ...primaryNavBase] : primaryNavBase
+  const moreNav: NavItem[] = workOn ? moreNavBase : [{ ...WORK_NAV, hold: true }, ...moreNavBase]
+
+  // 설정 flips the switch in storage and tells the shell; other windows hear the storage event.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => { if (event.key === WORK_HOLD_KEY || event.key === null) setWorkOn(isWorkListOn(storage())) }
+    const onLocal = () => setWorkOn(isWorkListOn(storage()))
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('dios:work-hold', onLocal)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('dios:work-hold', onLocal)
+    }
+  }, [])
   const [drift, setDrift] = useState(0)
   const [workCount, setWorkCount] = useState(0)
   const [usageAlerts, setUsageAlerts] = useState({ count: 0, over: 0 })
@@ -181,20 +211,21 @@ export default function App() {
       <EmergencyStopProvider>
         <ScanProvider>
         <div className="app-shell">
+          <PixelField />
           <aside className="app-sidebar glass-strong">
-            <button className="brand-lockup" onClick={() => navigate('now')}><span className="brand-mark">D</span><span><b>DIOS</b><small>AI 스킬과 할 일</small></span></button>
+            <button className="brand-lockup" onClick={() => navigate(firstView(workOn))} aria-label="DIOS 첫 화면으로"><span className="brand-mark"><SignalMark size={32} /></span><span><b>DIOS</b><small>AI 스킬과 할 일</small></span></button>
             <div className="sidebar-label">자주 쓰는 화면</div>
             <nav className="sidebar-nav">{primaryNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}{item.id === 'skillBoard' && drift > 0 && <em className="nav-count">{drift}</em>}{item.id === 'now' && workCount > 0 && <em className="nav-count">{workCount}</em>}{item.id === 'agentMonitor' && usageAlerts.count > 0 && <em className={`nav-count ${usageAlerts.over > 0 ? 'is-over' : 'is-warn'}`} aria-label={usageAlerts.over > 0 ? '정해 둔 금액을 넘은 곳이 있어요' : '정해 둔 금액에 가까운 곳이 있어요'}>{usageAlerts.count}</em>}<i>›</i></button>)}</nav>
             <div className="sidebar-spacer" />
             <div className="sidebar-label">더 보기</div>
             <nav className="sidebar-nav compact-nav">
               <button type="button" onClick={() => setMoreOpen((open) => !open)} className="sidebar-link" aria-expanded={moreOpen}><span>{moreOpen ? '▾' : '▸'}</span>{moreOpen ? '접기' : '다른 화면'}<i>›</i></button>
-              {moreOpen && moreNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}<i>›</i></button>)}
+              {moreOpen && moreNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}{item.hold && <em className="nav-hold" aria-label="잠시 쉬는 화면">보류</em>}<i>›</i></button>)}
             </nav>
             <div className="sidebar-footer"><button onClick={() => navigate('settings')} className={`sidebar-link ${currentView === 'settings' ? 'is-active' : ''}`}><span>⚙</span>설정<i>›</i></button><UpdateButton /></div>
           </aside>
           <main className="app-main">
-            <div className="topbar"><div className="breadcrumb"><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || SCREEN_TITLES[currentView] || 'DIOS'}</strong></div><div className="topbar-actions"><span className="online-dot" /> 이 컴퓨터에서만 돌아가요</div></div>
+            <div className="topbar"><div className="breadcrumb"><strong>{[...primaryNav, ...moreNav].find((item) => item.id === currentView)?.label || SCREEN_TITLES[currentView] || 'DIOS'}</strong></div><div className="topbar-actions"><span className="online-dot" /> 이 컴퓨터에서만 돌아가요 <span className="ju-meta">· local</span></div></div>
             <WhatsNewLine />
             <div key={welcome ? 'welcome' : currentView} className="app-content">
               {welcome ? (
