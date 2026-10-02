@@ -36,6 +36,7 @@ import { AppErrorBoundary } from './components/AppErrorBoundary'
 import { PixelField } from './brand/PixelField'
 import { SignalMark } from './brand/SignalMark'
 import { WORK_HOLD_KEY, firstView, isWorkListOn } from '../core/founder-work/work-hold'
+import { tidyBadgeLabel, type TidyBadge } from '../core/tidy/tidy-copy'
 
 type ViewType = 'now' | 'skillBoard' | 'apiKeys' | 'agentMonitor' | 'tidy' | 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'timeline' | 'aiResources' | 'decisions' | 'experiments' | 'humanGates'
 
@@ -126,6 +127,7 @@ export default function App() {
   const [drift, setDrift] = useState(0)
   const [workCount, setWorkCount] = useState(0)
   const [usageAlerts, setUsageAlerts] = useState({ count: 0, over: 0 })
+  const [tidyMenu, setTidyMenu] = useState<TidyBadge>({ count: 0, old: 0 })
   const [welcome, setWelcome] = useState<StartLook | null>(null)
   const navigate = (view: string) => {
     if (welcome) markWelcomeSeen()
@@ -167,6 +169,17 @@ export default function App() {
     const api = (window as unknown as { electronAPI?: { onUsageAlerts?: (callback: (payload: { count: number; over: number }) => void) => () => void } }).electronAPI
     if (!api?.onUsageAlerts) return
     return api.onUsageAlerts((payload) => setUsageAlerts({ count: payload.count, over: payload.over ?? 0 }))
+  }, [])
+
+  useEffect(() => {
+    type BadgeApi = {
+      tidyBadge?: () => Promise<TidyBadge>
+      onTidyBadge?: (callback: (payload: TidyBadge) => void) => () => void
+    }
+    const api = (window as unknown as { electronAPI?: BadgeApi }).electronAPI
+    if (!api?.onTidyBadge) return
+    void api.tidyBadge?.().then((badge) => setTidyMenu({ count: badge.count ?? 0, old: badge.old ?? 0 })).catch(() => {})
+    return api.onTidyBadge((payload) => setTidyMenu({ count: payload.count ?? 0, old: payload.old ?? 0 }))
   }, [])
 
   useEffect(() => {
@@ -218,7 +231,7 @@ export default function App() {
           <aside className="app-sidebar glass-strong">
             <button className="brand-lockup" onClick={() => navigate(firstView(workOn))} aria-label="DIOS 첫 화면으로"><span className="brand-mark"><SignalMark size={32} /></span><span><b>DIOS</b><small>AI 스킬과 할 일</small></span></button>
             <div className="sidebar-label">자주 쓰는 화면</div>
-            <nav className="sidebar-nav">{primaryNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}{item.id === 'skillBoard' && drift > 0 && <em className="nav-count">{drift}</em>}{item.id === 'now' && workCount > 0 && <em className="nav-count">{workCount}</em>}{item.id === 'agentMonitor' && usageAlerts.count > 0 && <em className={`nav-count ${usageAlerts.over > 0 ? 'is-over' : 'is-warn'}`} aria-label={usageAlerts.over > 0 ? '정해 둔 금액을 넘은 곳이 있어요' : '정해 둔 금액에 가까운 곳이 있어요'}>{usageAlerts.count}</em>}<i>›</i></button>)}</nav>
+            <nav className="sidebar-nav">{primaryNav.map((item) => <button key={item.id} onClick={() => navigate(item.id)} className={`sidebar-link ${currentView === item.id ? 'is-active' : ''}`}><span>{item.icon}</span>{item.label}{item.id === 'skillBoard' && drift > 0 && <em className="nav-count">{drift}</em>}{item.id === 'now' && workCount > 0 && <em className="nav-count">{workCount}</em>}{item.id === 'agentMonitor' && usageAlerts.count > 0 && <em className={`nav-count ${usageAlerts.over > 0 ? 'is-over' : 'is-warn'}`} aria-label={usageAlerts.over > 0 ? '정해 둔 금액을 넘은 곳이 있어요' : '정해 둔 금액에 가까운 곳이 있어요'}>{usageAlerts.count}</em>}{item.id === 'tidy' && tidyMenu.count > 0 && <em className="nav-count is-warn" aria-label={tidyBadgeLabel(tidyMenu)}>{tidyMenu.count}</em>}<i>›</i></button>)}</nav>
             <div className="sidebar-spacer" />
             <div className="sidebar-label">더 보기</div>
             <nav className="sidebar-nav compact-nav">

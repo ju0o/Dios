@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { repoLine, repoNeedsAttention } from '../../core/tidy/git-leftovers'
 import { processIsOld, processLine } from '../../core/tidy/background-jobs'
 import { KIND_LABEL, heavyIsStale, heavyLine } from '../../core/tidy/space-hogs'
+import { findOverlaps, overlapLine, overlappingPids } from '../../core/tidy/ports'
 import { emptyLine, sectionTitle, tidyHeadline } from '../../core/tidy/tidy-copy'
 import { tidyApi, type HeadlessProcess, type HeavyFolder, type RepoLeftover, type ScheduledJob, type TidyReport } from './tidy-api'
 import { whenText } from './skill-board-api'
@@ -83,7 +84,13 @@ export function TidyView() {
     try {
       const result = await api.tidyStop(pid)
       setNotice({ ok: result.ok, text: result.message })
-      if (result.ok) setReport((current) => (current ? { ...current, processes: current.processes.filter((proc) => proc.pid !== pid) } : current))
+      if (result.ok) {
+        setReport((current) => {
+          if (!current) return current
+          const processes = current.processes.filter((proc) => proc.pid !== pid)
+          return { ...current, processes, overlaps: findOverlaps(processes) }
+        })
+      }
     } catch {
       setNotice({ ok: false, text: '끄지 못했어요.' })
     } finally {
@@ -146,6 +153,7 @@ export function TidyView() {
   const attention = report.repos.filter(repoNeedsAttention).length
   const oldProcesses = report.processes.filter((proc) => processIsOld(proc)).length
   const stale = report.heavy.filter((row) => heavyIsStale(row)).length
+  const overlapIds = overlappingPids(report.overlaps)
 
   return (
     <section className="skill-board" aria-label="정리">
@@ -189,7 +197,15 @@ export function TidyView() {
         <header className="scan-report-head">
           <b>{sectionTitle('processes', report.processes.length)}</b>
           {oldProcesses > 0 && <small>하루 넘게 켜진 것 {oldProcesses}개</small>}
+          {report.overlaps.length > 0 && <small>겹친 것 {report.overlaps.length}건</small>}
         </header>
+        {report.overlaps.length > 0 && (
+          <div className="tidy-overlaps">
+            {report.overlaps.map((group) => (
+              <p key={`${group.kind}-${group.port}-${group.cwd}`} className="tidy-overlap" role="status">{overlapLine(group, report.processes)}</p>
+            ))}
+          </div>
+        )}
         {report.processes.length === 0 ? (
           <p className="skill-quiet">{emptyLine('processes', report.roots.length)}</p>
         ) : (
@@ -198,6 +214,7 @@ export function TidyView() {
               <ProcessRow
                 key={proc.pid}
                 proc={proc}
+                overlapped={overlapIds.has(proc.pid)}
                 busy={busy}
                 asking={confirm?.kind === 'stop' && confirm.pid === proc.pid}
                 onAsk={() => setConfirm({ kind: 'stop', pid: proc.pid })}
@@ -294,8 +311,9 @@ function WorktreeList({ trees, onOpen }: { trees: RepoLeftover['worktrees']; onO
   )
 }
 
-function ProcessRow({ proc, busy, asking, onAsk, onCancel, onStop, onOpen }: {
+function ProcessRow({ proc, overlapped, busy, asking, onAsk, onCancel, onStop, onOpen }: {
   proc: HeadlessProcess
+  overlapped: boolean
   busy: boolean
   asking: boolean
   onAsk: () => void
@@ -304,10 +322,10 @@ function ProcessRow({ proc, busy, asking, onAsk, onCancel, onStop, onOpen }: {
   onOpen: (target: string) => void
 }) {
   return (
-    <li className={`scan-row ${processIsOld(proc) ? 'is-found' : 'is-empty'}`}>
+    <li className={`scan-row ${processIsOld(proc) || overlapped ? 'is-found' : 'is-empty'}`}>
       <i aria-hidden="true" />
       <div className="scan-row-main">
-        <b className="tidy-title">{proc.summary}<span className="ju-meta tidy-branch">{proc.name} · pid {proc.pid}</span></b>
+        <b className="tidy-title">{proc.summary}<span className="ju-meta tidy-branch">{proc.name} · pid {proc.pid}</span>{overlapped && <span className="ju-meta tidy-branch">겹침</span>}</b>
         <small className="is-why">{processLine(proc)}</small>
         <details className="skill-raw">
           <summary>실행 명령 보기</summary>

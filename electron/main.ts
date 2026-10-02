@@ -116,6 +116,7 @@ app.whenReady().then(() => {
   startWorkWatch()
   startUpdateWatch()
   startBlurbWatch()
+  startTidyBadgeWatch()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1593,7 +1594,14 @@ const WINDOWS_PROCESS_SCRIPT = [
   '} | ConvertTo-Json -Compress',
 ].join('\n')
 
-async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; notes: string[] }> {
+const WINDOWS_PORT_SCRIPT = [
+  'Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |',
+  'Select-Object LocalPort, OwningProcess | ConvertTo-Json -Compress',
+].join(' ')
+
+type RawProcess = import('../src/core/tidy/background-jobs').RawProcess
+
+async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; raw: RawProcess[]; notes: string[] }> {
   const { headlessProcesses, parseProcessJson, parsePsList } = await import('../src/core/tidy/background-jobs')
   const notes: string[] = []
   const ownPids = [process.pid, process.ppid].filter((pid) => pid > 0)
@@ -1603,20 +1611,45 @@ async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; no
       const result = await tidyRun('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeoutMs: 40000 })
       if (result.code !== 0) {
         notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-        return { processes: [], notes }
+        return { processes: [], raw: [], notes }
       }
-      return { processes: headlessProcesses(parseProcessJson(result.stdout), { ownPids }), notes }
+      const raw = parseProcessJson(result.stdout)
+      return { processes: headlessProcesses(raw, { ownPids }), raw, notes }
     }
     const result = await tidyRun('ps', ['-eo', 'pid=,ppid=,etimes=,rss=,args='], { timeoutMs: 10000 })
     if (result.code !== 0) {
       notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-      return { processes: [], notes }
+      return { processes: [], raw: [], notes }
     }
+    const raw = parsePsList(result.stdout)
     const cwdOf = process.platform === 'linux' ? (pid: number) => fs.readlinkSync(`/proc/${pid}/cwd`) : undefined
-    return { processes: headlessProcesses(parsePsList(result.stdout), { ownPids, cwdOf }), notes }
+    return { processes: headlessProcesses(raw, { ownPids, cwdOf }), raw, notes }
   } catch {
     notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-    return { processes: [], notes }
+    return { processes: [], raw: [], notes }
+  }
+}
+
+/** Listening ports for the current OS. A missing command or a bad exit becomes ok: false. */
+async function collectListeningPorts(): Promise<{ ok: boolean; ports: Map<number, number[]> }> {
+  const { parseLsofListen, parseNetTcpJson, parseSsListen } = await import('../src/core/tidy/ports')
+  try {
+    if (process.platform === 'win32') {
+      const encoded = Buffer.from(WINDOWS_PORT_SCRIPT, 'utf16le').toString('base64')
+      const result = await tidyRun('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeoutMs: 20000 })
+      if (result.code !== 0) return { ok: false, ports: new Map() }
+      return { ok: true, ports: parseNetTcpJson(result.stdout) }
+    }
+    if (process.platform === 'darwin') {
+      const result = await tidyRun('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'], { timeoutMs: 15000 })
+      if (result.code !== 0 && !result.stdout.trim()) return { ok: false, ports: new Map() }
+      return { ok: true, ports: parseLsofListen(result.stdout) }
+    }
+    const result = await tidyRun('ss', ['-ltnp'], { timeoutMs: 10000 })
+    if (result.code !== 0) return { ok: false, ports: new Map() }
+    return { ok: true, ports: parseSsListen(result.stdout) }
+  } catch {
+    return { ok: false, ports: new Map() }
   }
 }
 
@@ -1632,7 +1665,12 @@ async function buildTidyReport(): Promise<TidyReport> {
   })
   repos.sort((left, right) => left.repo.localeCompare(right.repo))
   if (repos.length && repos.every((repo) => repo.failed)) notes.push('git 프로그램이 없거나 응답하지 않아서 프로젝트 상태를 못 읽었어요.')
-  const [jobs, processes] = await Promise.all([tidyJobs(), tidyProcesses()])
+  const [jobs, looked] = await Promise.all([tidyJobs(), tidyProcesses()])
+  const { applyPortCollection } = await import('../src/core/tidy/ports')
+  const attached = looked.processes.length
+    ? applyPortCollection(looked.processes, looked.raw, await collectListeningPorts())
+    : { processes: looked.processes, overlaps: [] as TidyReport['overlaps'], note: '' }
+  if (attached.note) notes.push(attached.note)
   const heavy = findHeavyFolders(roots, { limit: 40, sizeBudget: 30000 })
   const temp = tempFolderRow(os.tmpdir())
   if (temp && temp.bytes >= 50 * 1024 * 1024) heavy.push(temp)
@@ -1641,18 +1679,61 @@ async function buildTidyReport(): Promise<TidyReport> {
     roots,
     repos,
     jobs: jobs.jobs,
-    processes: processes.processes,
+    processes: attached.processes,
+    overlaps: attached.overlaps,
     heavy,
-    notes: [...notes, ...jobs.notes, ...processes.notes],
+    notes: [...notes, ...jobs.notes, ...looked.notes],
   }
+}
+
+type TidyBadge = import('../src/core/tidy/tidy-copy').TidyBadge
+
+let lastTidyBadge: TidyBadge = { count: 0, old: 0 }
+
+/** Pushes the left-menu number. One send, not a timer loop. */
+async function publishTidyBadge(report: Pick<TidyReport, 'processes' | 'overlaps'>): Promise<void> {
+  const { tidyBadge } = await import('../src/core/tidy/tidy-copy')
+  lastTidyBadge = tidyBadge(report)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('tidy:badge', lastTidyBadge)
+  }
+}
+
+/**
+ * One look after start, and only at programs and ports — not the full folder scan.
+ * Skipped once a full tidy report already exists.
+ */
+function startTidyBadgeWatch(): void {
+  setTimeout(() => {
+    void (async () => {
+      if (lastTidy) {
+        await publishTidyBadge(lastTidy)
+        return
+      }
+      try {
+        const looked = await tidyProcesses()
+        const { applyPortCollection } = await import('../src/core/tidy/ports')
+        const attached = looked.processes.length
+          ? applyPortCollection(looked.processes, looked.raw, await collectListeningPorts())
+          : { processes: looked.processes, overlaps: [] as TidyReport['overlaps'] }
+        await publishTidyBadge(attached)
+      } catch {
+        // A failed port read leaves the badge at zero.
+      }
+    })()
+  }, 60_000)
 }
 
 /** The report, reusing the last one unless a fresh look is asked for. Parallel asks share one scan. */
 async function tidyReport(refresh: boolean): Promise<TidyReport> {
-  if (!refresh && lastTidy) return lastTidy
+  if (!refresh && lastTidy) {
+    void publishTidyBadge(lastTidy)
+    return lastTidy
+  }
   if (!tidyInFlight) {
     tidyInFlight = buildTidyReport().then((report) => {
       lastTidy = report
+      void publishTidyBadge(report)
       return report
     }).finally(() => {
       tidyInFlight = null
@@ -1679,6 +1760,8 @@ function tidyKnownPaths(): Set<string> {
 
 ipcMain.handle('tidy:report', async (_event, refresh?: boolean) => tidyReport(Boolean(refresh)))
 
+ipcMain.handle('tidy:badge', () => lastTidyBadge)
+
 ipcMain.handle('tidy:open', async (_event, target: string) => {
   const resolved = path.resolve(String(target || ''))
   if (!tidyKnownPaths().has(resolved)) return { ok: false, message: '그 폴더는 목록에 없어요.' }
@@ -1701,7 +1784,12 @@ ipcMain.handle('tidy:stop', async (_event, pid: number) => {
   } catch {
     return { ok: false, message: '끄지 못했어요. 이미 꺼졌거나 권한이 없어요.' }
   }
-  if (lastTidy) lastTidy = { ...lastTidy, processes: lastTidy.processes.filter((proc) => proc.pid !== id) }
+  if (lastTidy) {
+    const { findOverlaps } = await import('../src/core/tidy/ports')
+    const processes = lastTidy.processes.filter((proc) => proc.pid !== id)
+    lastTidy = { ...lastTidy, processes, overlaps: findOverlaps(processes) }
+    void publishTidyBadge(lastTidy)
+  }
   recordActivity('tidy', '창 없이 켜져 있던 프로그램 끄기', row.summary)
   return { ok: true, message: `${row.summary}을(를) 껐어요.` }
 })

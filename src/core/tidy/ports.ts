@@ -145,6 +145,38 @@ export function overlappingPids(overlaps: PortOverlap[]): Set<number> {
   return new Set(overlaps.flatMap((group) => group.pids))
 }
 
+/**
+ * What buildTidyReport does with a port read. A failed read keeps the process list,
+ * clears ports, and reports no overlaps, so the rest of the tidy screen still opens.
+ */
+export interface PortCollection {
+  ok: boolean
+  ports: PortsByPid
+}
+
+export interface PortAttachment {
+  processes: HeadlessProcess[]
+  overlaps: PortOverlap[]
+  /** Plain Korean note when the read failed; '' when it worked or there was nothing to read. */
+  note: string
+}
+
+/**
+ * Attaches listening ports and finds overlaps. Failure degrades to empty ports
+ * instead of dropping the process list.
+ */
+export function applyPortCollection(processes: HeadlessProcess[], raw: RawProcess[], collection: PortCollection): PortAttachment {
+  if (!collection.ok) {
+    return {
+      processes: processes.map((proc) => ({ ...proc, ports: [] })),
+      overlaps: [],
+      note: '프로그램이 쓰는 포트를 읽지 못했어요. 겹치는지는 이번엔 못 봤어요.',
+    }
+  }
+  const listed = withPorts(processes, raw, collection.ports)
+  return { processes: listed, overlaps: findOverlaps(listed), note: '' }
+}
+
 /** One plain Korean sentence per overlap, naming what is shared and what to do. */
 export function overlapLine(group: PortOverlap, processes: HeadlessProcess[]): string {
   const rows = processes.filter((proc) => group.pids.includes(proc.pid))

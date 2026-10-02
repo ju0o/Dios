@@ -211,6 +211,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 정리 (unsaved work, background jobs, heavy folders)
   // ═══════════════════════════════════════════
   tidyReport: (refresh?: boolean) => ipcRenderer.invoke('tidy:report', refresh),
+  tidyBadge: () => ipcRenderer.invoke('tidy:badge'),
+  onTidyBadge: (callback: (payload: { count: number; old: number }) => void) => {
+    const listener = (_event: unknown, payload: { count: number; old: number }) => callback(payload)
+    ipcRenderer.on('tidy:badge', listener)
+    return () => ipcRenderer.removeListener('tidy:badge', listener)
+  },
   tidyOpen: (target: string) => ipcRenderer.invoke('tidy:open', target),
   tidyStop: (pid: number) => ipcRenderer.invoke('tidy:stop', pid),
   tidyTrash: (target: string) => ipcRenderer.invoke('tidy:trash', target),
