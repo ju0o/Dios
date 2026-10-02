@@ -82,7 +82,7 @@ npm run dev
 npm run build
 ```
 
-`npm run build` 결과는 `release/DIOS-설치.exe`입니다.
+`npm run build` 결과는 `release/DIOS-Setup.exe`입니다. GitHub에 올리는 설치 파일도 같은 이름이고, 버전 태그(`v0.2.6` 같은 것)를 푸시하면 Windows에서 만들어져 Releases에 붙습니다.
 
 ## 알아 둘 것
 
