@@ -1244,6 +1244,17 @@ const secretLock = {
 /** Deleted keys wait here so 되돌리기 can put them back. Gone when the app closes. */
 const deletedKeys = new Map<string, import('../src/core/api-keys/api-key-store').DeletedKey>()
 
+/** Found keys waiting for a yes. The secret stays here, not in the window. Gone when the app closes. */
+let candidateMemory: import('../src/core/api-keys/project-discovery').CandidateMemory | null = null
+
+async function candidateBox() {
+  if (!candidateMemory) {
+    const { CandidateMemory } = await import('../src/core/api-keys/project-discovery')
+    candidateMemory = new CandidateMemory()
+  }
+  return candidateMemory
+}
+
 /** The last .env write, so 되돌리기 can put that one file back. */
 let envUndo: { keyId: string; file: string; backup: string; oldKey: string; project: string; platform: string; label: string; note: string } | null = null
 
@@ -1302,27 +1313,90 @@ async function allScanRoots(): Promise<string[]> {
   return (await scanRootEntries()).map((entry) => entry.root)
 }
 
-/** Scan the given roots (or every known root), register what was found, and describe each root. */
+/** Scan the given roots (or every known root) and hold new keys as candidates. Nothing is saved yet. */
 async function runKeyScan(onlyRoots?: string[]) {
-  const { scanEnvRoots, scanMessage, rootLine } = await import('../src/core/api-keys/env-scan')
-  const { registerFindings } = await import('../src/core/api-keys/api-key-store')
+  const { scanMessage, rootLine } = await import('../src/core/api-keys/env-scan')
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listApiKeys } = await import('../src/core/api-keys/api-key-store')
+  const { listPlaces } = await import('../src/core/skill-board/places')
   const known = await allScanRoots()
   const wanted = onlyRoots && onlyRoots.length ? onlyRoots.map((root) => path.resolve(String(root))) : known
-  const scanned = scanEnvRoots(wanted)
-  const registered = registerFindings(getDatabase(), secretLock, scanned.findings)
-  for (const id of registered.added) await syncUsageService(id)
-  if (registered.added.length) recordActivity('apiKey', '프로젝트 폴더에서 API 키 찾아 등록', `${registered.added.length}개`)
-  const roots = scanned.roots.map((report) => ({
-    ...report,
-    added: registered.addedByRoot[report.root] ?? 0,
-    line: rootLine(report, registered.addedByRoot[report.root] ?? 0),
-  }))
+  const places = await listPlaces(os.homedir(), process.platform)
+  const local = places.find((place) => place.kind === 'local')
+  const place = local ? discovery.asDiscoveryPlace(local) : discovery.LOCAL_PLACE
+  const existing = listApiKeys(getDatabase()).map((card) => ({ project: card.project, platform: card.platform, label: card.label }))
+  const collected = discovery.collectFromRoots(wanted, existing, discovery.probeGit, place)
+  const memory = await candidateBox()
+  memory.replacePlace(place.placeId, discovery.withIds(collected.pending, () => crypto.randomUUID()))
+  const roots = collected.scan.roots.map((report) => ({ ...report, added: 0, line: rootLine(report, 0) }))
+  const lead = discovery.candidateLead(collected.projects.length, collected.pending.length, discovery.projectsWithKeys(collected.pending))
   return {
     ok: true,
-    message: scanMessage(scanned.folders, scanned.files, registered.added.length, registered.kept, scanned.findings.length, wanted),
-    added: registered.added.length,
+    message: scanMessage(collected.scan.folders, collected.scan.files, 0, collected.kept, collected.scan.findings.length, wanted),
+    added: 0,
     roots,
     scannedAt: Date.now(),
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead,
+    projectsFound: collected.projects.length,
+    listing: await keyListing(),
+  }
+}
+
+/** Look on this computer and on every SSH or WSL place. Keys stay candidates until a yes. */
+async function runProjectDiscovery() {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listPlaces, runRemote } = await import('../src/core/skill-board/places')
+  const local = await runKeyScan()
+  const notes = [...local.notes]
+  let projectsFound = local.projectsFound
+  const memory = await candidateBox()
+  const places = await listPlaces(os.homedir(), process.platform)
+  for (const place of discovery.remotePlaces(places)) {
+    const here = discovery.asDiscoveryPlace(place)
+    try {
+      const raw = await runRemote(place, [], discovery.DISCOVERY_SCRIPT, 12000)
+      const projects = discovery.parseRemoteProjects(raw)
+      const { listApiKeys } = await import('../src/core/api-keys/api-key-store')
+      const existing = listApiKeys(getDatabase()).map((card) => ({ project: card.project, platform: card.platform, label: card.label }))
+      const found = discovery.findingsFromRemote(projects, here, existing)
+      memory.replacePlace(place.id, discovery.withIds(found.pending, () => crypto.randomUUID()))
+      projectsFound += found.projectsFound
+    } catch {
+      notes.push(discovery.placeFailureNote(place.name))
+    }
+  }
+  const cards = memory.list()
+  const withKeys = new Set(cards.map((card) => `${card.placeId}\n${card.project}`)).size
+  const lead = discovery.candidateLead(projectsFound, cards.length, withKeys)
+  return {
+    ...local,
+    candidates: cards,
+    notes,
+    projectsFound,
+    lead,
+    message: lead || local.message,
+  }
+}
+
+/** Save the chosen candidates with the existing key store, then forget those secrets. */
+async function saveChosenCandidates(ids: string[]) {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const memory = await candidateBox()
+  const approved = discovery.approveCandidates(getDatabase(), secretLock, memory, ids)
+  for (const id of approved.savedIds) await syncUsageService(id)
+  const saved = approved.saved
+  if (saved) recordActivity('apiKey', '고른 API 키 저장', `${saved}개`)
+  return {
+    ok: true,
+    message: saved ? `${saved}개를 저장했어요.` : '저장할 키가 없어요.',
+    added: saved,
+    roots: [],
+    scannedAt: 0,
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead: '',
     listing: await keyListing(),
   }
 }
@@ -1485,6 +1559,34 @@ ipcMain.handle('apiKeys:peekAll', async () => {
 ipcMain.handle('apiKeys:scan', async (_event, onlyRoots?: unknown) => {
   const roots = Array.isArray(onlyRoots) ? onlyRoots.map(String).filter(Boolean) : undefined
   return runKeyScan(roots)
+})
+
+/** Find projects on this computer and on each SSH or WSL place. Keys stay as candidates. */
+ipcMain.handle('apiKeys:discover', async () => runProjectDiscovery())
+
+/** Save only the candidates the Founder picked. */
+ipcMain.handle('apiKeys:saveCandidates', async (_event, ids: unknown) => {
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : []
+  return saveChosenCandidates(wanted)
+})
+
+/** Drop candidates without writing them. */
+ipcMain.handle('apiKeys:dismissCandidates', async (_event, ids: unknown) => {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const memory = await candidateBox()
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : memory.list().map((card) => card.id)
+  discovery.dismissCandidates(memory, wanted)
+  return {
+    ok: true,
+    message: '이번엔 저장하지 않았어요.',
+    added: 0,
+    roots: [],
+    scannedAt: 0,
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead: '',
+    listing: await keyListing(),
+  }
 })
 
 /** Let the Founder pick one or more folders, remember them, and scan just those right away. */

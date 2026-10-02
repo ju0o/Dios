@@ -113,6 +113,14 @@ code, pre, kbd, .mono { font-family: var(--ju-mono); }
 .scan-chip { font-family: var(--ju-mono); font-size: 12px; letter-spacing: .04em; color: var(--ju-muted); }
 .scan-chip.is-count { color: var(--ju-paper); }
 @media (max-width: 640px) { .scan-row { grid-template-columns: 10px minmax(0, 1fr); } .scan-row-actions { grid-column: 2; justify-content: flex-start; } }
+.key-candidates { display: flex; flex-direction: column; gap: 12px; }
+.key-candidate-group { display: flex; flex-direction: column; gap: 2px; }
+.key-candidate-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--ju-line-soft); }
+.key-candidate-row input { width: 20px; height: 20px; margin-top: 4px; }
+.key-candidate-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.key-candidate-main b, .key-candidate-main code, .key-candidate-main small { overflow-wrap: anywhere; }
+.key-candidate-main code { font-size: 14px; }
+.key-candidate-main small { color: var(--ju-muted); font-size: 13px; }
 
 /* 정리 rows: a title with a mono tag, nested worktree list, and an inline second question before anything destructive. */
 .tidy-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 16px; color: var(--ju-paper); }

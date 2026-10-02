@@ -90,14 +90,14 @@ describe('env scan', () => {
   it('sums the scan in plain Korean without paths', () => {
     expect(scanMessage(0, 0, 0, 0, 0)).toContain('폴더가 없어요')
     expect(scanMessage(2, 0, 0, 0, 0)).toContain('.env')
-    expect(scanMessage(2, 3, 2, 1, 3)).toBe('폴더 2개를 훑어서 키 3개를 찾았어요. 2개를 새로 등록했어요. 이미 있던 1개는 그대로예요.')
+    expect(scanMessage(2, 3, 2, 1, 3)).toBe('폴더 2개를 훑어서 키 3개를 찾았어요. 이미 저장해 둔 1개는 빼 두었어요. 저장은 아래에서 고른 뒤에 해요.')
   })
 
   it('names the folder when only one or two were looked at', () => {
     expect(shortRoot('C:\\Users\\user\\Desktop\\Projects\\')).toBe('Projects')
     expect(shortRoot('/home/me/src')).toBe('src')
     expect(scanMessage(1, 0, 0, 0, 0, ['C:\\Users\\user\\Desktop\\Projects'])).toBe('"Projects" 폴더를 훑었는데 설정 파일(.env)이 없어요.')
-    expect(scanMessage(2, 4, 1, 0, 1, ['/a/Projects', '/b/work'])).toBe('"Projects"와 "work" 폴더를 훑어서 키 1개를 찾았어요. 1개를 새로 등록했어요.')
+    expect(scanMessage(2, 4, 1, 0, 1, ['/a/Projects', '/b/work'])).toBe('"Projects"와 "work" 폴더를 훑어서 키 1개를 찾았어요. 저장은 아래에서 고른 뒤에 해요.')
     expect(scanMessage(3, 4, 0, 0, 0, ['/a', '/b', '/c'])).toContain('폴더 3개')
   })
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { OTHER_PLATFORM, PLATFORMS, USAGE_TYPES, groupByProject, headline, usageLine, type ApiKeyCard, type ApiKeyInput } from '../../core/api-keys/api-key-text'
 import { healthLabel } from '../../core/api-keys/key-health'
-import { apiKeysApi, type KeyListing, type KeyResult, type ScanOrigin, type ScanResult, type ScanRootResult } from './api-keys-api'
+import { apiKeysApi, type KeyListing, type KeyResult, type PublicCandidate, type ScanOrigin, type ScanResult, type ScanRootResult } from './api-keys-api'
 import { whenText } from './skill-board-api'
 
 type Notice = { ok: boolean; text: string; undoId?: string; undoEnv?: boolean } | null
@@ -52,6 +52,11 @@ export function ApiKeysView() {
   /** Per-folder outcome of the last scan, keyed by folder, so each row says what happened there. */
   const [lastScan, setLastScan] = useState<{ at: number; rows: Record<string, ScanRootResult> }>({ at: 0, rows: {} })
   const [scanningRoot, setScanningRoot] = useState('')
+  const [candidates, setCandidates] = useState<PublicCandidate[]>([])
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [placeNotes, setPlaceNotes] = useState<string[]>([])
+  const [lead, setLead] = useState('')
+  const [discovering, setDiscovering] = useState(false)
 
   const load = useCallback(async () => {
     const api = apiKeysApi()
@@ -74,7 +79,14 @@ export function ApiKeysView() {
     if (result.scannedAt) {
       setLastScan((current) => ({ at: result.scannedAt, rows: { ...current.rows, ...Object.fromEntries(result.roots.map((row) => [row.root, row])) } }))
     }
-    if (result.message && (!quiet || result.added > 0)) setNotice({ ok: result.ok, text: result.message })
+    if (result.candidates) {
+      setCandidates(result.candidates)
+      setPicked(Object.fromEntries(result.candidates.map((row) => [row.id, true])))
+    }
+    if (result.notes) setPlaceNotes(result.notes)
+    if (typeof result.lead === 'string') setLead(result.lead)
+    const fresh = result.candidates?.length ?? 0
+    if (result.message && (!quiet || fresh > 0)) setNotice({ ok: result.ok, text: result.message })
   }, [])
 
   const revealAll = useCallback(async () => {
@@ -102,6 +114,46 @@ export function ApiKeysView() {
       setScanningRoot('')
     }
   }, [takeScan])
+
+  /** This computer and every SSH or WSL place. A missed place does not cancel the rest. */
+  const discover = useCallback(async () => {
+    const api = apiKeysApi()
+    if (!api?.apiKeysDiscover) return
+    setDiscovering(true)
+    try {
+      takeScan(await api.apiKeysDiscover(), false)
+    } catch {
+      setNotice({ ok: false, text: '프로젝트를 찾지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setDiscovering(false)
+    }
+  }, [takeScan])
+
+  const saveCandidates = useCallback(async (ids: string[]) => {
+    const api = apiKeysApi()
+    if (!api?.apiKeysSaveCandidates || !ids.length) return
+    setBusy(true)
+    try {
+      takeScan(await api.apiKeysSaveCandidates(ids), false)
+    } catch {
+      setNotice({ ok: false, text: '키를 저장하지 못했어요. 다시 시도해 주세요.' })
+    } finally {
+      setBusy(false)
+    }
+  }, [takeScan])
+
+  const dismissCandidates = useCallback(async () => {
+    const api = apiKeysApi()
+    if (!api?.apiKeysDismissCandidates) return
+    setBusy(true)
+    try {
+      takeScan(await api.apiKeysDismissCandidates(candidates.map((row) => row.id)), false)
+    } catch {
+      setNotice({ ok: false, text: '이번 목록을 치우지 못했어요.' })
+    } finally {
+      setBusy(false)
+    }
+  }, [takeScan, candidates])
 
   /** The Founder picks folders; those are remembered and scanned right away. */
   const pickAndScan = useCallback(async () => {
@@ -343,14 +395,17 @@ export function ApiKeysView() {
           <button type="button" className="skill-action primary" onClick={() => (formOpen && !editingId ? closeForm() : openNew())}>
             {formOpen && !editingId ? '등록 닫기' : '새 키 등록'}
           </button>
-          <button type="button" className="skill-action" disabled={scanning} onClick={() => void pickAndScan()}>
+          <button type="button" className="skill-action" disabled={scanning || discovering} onClick={() => void pickAndScan()}>
             {scanning && !scanningRoot ? '폴더를 훑는 중…' : '폴더 골라서 키 찾기'}
           </button>
           {scanRoots.length > 0 && (
-            <button type="button" className="skill-action" disabled={scanning} onClick={() => void scan(false)}>
+            <button type="button" className="skill-action" disabled={scanning || discovering} onClick={() => void scan(false)}>
               {`아래 폴더 ${scanRoots.length}곳 모두 훑기`}
             </button>
           )}
+          <button type="button" className="skill-action" disabled={scanning || discovering} onClick={() => void discover()}>
+            {discovering ? '프로젝트를 찾는 중…' : '새 프로젝트 찾기'}
+          </button>
           {cards.length > 0 && (
             <button type="button" className="skill-action" disabled={checking} onClick={() => void checkKeys()}>
               {checking ? '키를 확인하는 중…' : '키 상태 확인'}
@@ -367,6 +422,20 @@ export function ApiKeysView() {
         </div>
       </header>
 
+      {(candidates.length > 0 || placeNotes.length > 0 || lead) && (
+        <CandidateCard
+          lead={lead}
+          notes={placeNotes}
+          candidates={candidates}
+          picked={picked}
+          busy={busy}
+          onPick={(id, on) => setPicked((current) => ({ ...current, [id]: on }))}
+          onSaveSelected={() => void saveCandidates(candidates.filter((row) => picked[row.id] !== false).map((row) => row.id))}
+          onSaveAll={() => void saveCandidates(candidates.map((row) => row.id))}
+          onIgnore={() => void dismissCandidates()}
+        />
+      )}
+
       <section className="skill-card scan-report" aria-label="훑는 폴더와 결과">
         <header className="scan-report-head">
           <b>{scanRoots.length ? `훑는 폴더 ${scanRoots.length}곳` : '아직 훑는 폴더가 없어요'}</b>
@@ -376,7 +445,7 @@ export function ApiKeysView() {
           <p className="skill-quiet">
             {scanRoots.length
               ? '폴더마다 어디를 훑었고 무엇이 나왔는지 그대로 보여요. 프로젝트가 다른 곳에 있으면 위의 "폴더 골라서 키 찾기"로 그 폴더를 바로 고르세요.'
-              : '위의 "폴더 골라서 키 찾기"를 눌러 프로젝트 폴더를 고르면, 그 안의 .env 파일에서 API 키를 찾아 등록해요.'}
+              : '위의 "폴더 골라서 키 찾기"를 눌러 프로젝트 폴더를 고르면, 그 안의 .env 파일에서 API 키를 찾아 보여 줘요. 고른 것만 저장해요.'}
           </p>
         </div>
         {scanRoots.length > 0 && (
@@ -394,7 +463,7 @@ export function ApiKeysView() {
                     <small className="is-why">{busyHere ? '지금 훑는 중…' : row ? row.line : '아직 안 훑었어요.'}</small>
                   </div>
                   <div className="scan-row-actions">
-                    <button type="button" className="skill-link" disabled={scanning} onClick={() => void scan(false, root)}>이 폴더만 훑기</button>
+                    <button type="button" className="skill-link" disabled={scanning || discovering} onClick={() => void scan(false, root)}>이 폴더만 훑기</button>
                     <button type="button" className="skill-link" onClick={() => void openFolder(root)}>열기</button>
                     <button type="button" className="skill-link" onClick={() => void dropFolder(root)}>빼기</button>
                   </div>
@@ -507,9 +576,88 @@ export function ApiKeysView() {
 
       {cards.length === 0 && !formOpen && (
         <p className="skill-quiet">
-          등록하면 어느 프로젝트가 어떤 플랫폼과 이어져 있는지 한눈에 보여요. 위의 "폴더 골라서 키 찾기"로 프로젝트 폴더를 고르면 .env 파일에 있는 키를 모아 와요.
+          등록하면 어느 프로젝트가 어떤 플랫폼과 이어져 있는지 한눈에 보여요. 위의 "새 프로젝트 찾기"로 프로젝트 폴더의 .env를 보면, 고른 키만 저장해요.
         </p>
       )}
     </section>
   )
+}
+
+/** Keys found in a project, still waiting for a yes. Only the masked copy is on screen. */
+function CandidateCard({
+  lead,
+  notes,
+  candidates,
+  picked,
+  busy,
+  onPick,
+  onSaveSelected,
+  onSaveAll,
+  onIgnore,
+}: {
+  lead: string
+  notes: string[]
+  candidates: PublicCandidate[]
+  picked: Record<string, boolean>
+  busy: boolean
+  onPick: (id: string, on: boolean) => void
+  onSaveSelected: () => void
+  onSaveAll: () => void
+  onIgnore: () => void
+}) {
+  const groups = groupCandidates(candidates)
+  const selected = candidates.filter((row) => picked[row.id] !== false).length
+  return (
+    <section className="skill-card key-candidates" aria-label="새로 찾은 API 키">
+      <header className="scan-report-head">
+        <b>{lead || (candidates.length ? '새 프로젝트에서 키를 찾았어요' : '다른 컴퓨터')}</b>
+      </header>
+      {notes.map((note) => <p key={note} className="skill-quiet">{note}</p>)}
+      {groups.map((group) => (
+        <div key={group.key} className="key-candidate-group">
+          <b>{group.title}</b>
+          {group.path && <small className="skill-quiet">{group.path}</small>}
+          {group.rows.map((row) => (
+            <label key={row.id} className="key-candidate-row">
+              <input
+                type="checkbox"
+                checked={picked[row.id] !== false}
+                aria-label={`${row.platform} ${row.label} 저장`}
+                onChange={(event) => onPick(row.id, event.target.checked)}
+              />
+              <span className="key-candidate-main">
+                <b>{row.platform}</b>
+                <code>{row.label}</code>
+                <code>{row.masked}</code>
+                <small>{row.source}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+      ))}
+      {candidates.length > 0 && (
+        <div className="skill-toolbar">
+          <button type="button" className="skill-action primary" disabled={busy || selected === 0} onClick={onSaveSelected}>
+            {`선택한 ${selected}개 저장`}
+          </button>
+          <button type="button" className="skill-action" disabled={busy} onClick={onSaveAll}>전부 저장</button>
+          <button type="button" className="skill-action" disabled={busy} onClick={onIgnore}>이번엔 무시</button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function groupCandidates(rows: PublicCandidate[]): Array<{ key: string; title: string; path: string; rows: PublicCandidate[] }> {
+  const groups: Array<{ key: string; title: string; path: string; rows: PublicCandidate[] }> = []
+  for (const row of rows) {
+    const key = `${row.project}\0${row.placeId}\0${row.projectPath}`
+    let group = groups.find((item) => item.key === key)
+    if (!group) {
+      group = { key, title: `${row.project} · ${row.placeName}`, path: row.projectPath, rows: [] }
+      groups.push(group)
+    }
+    group.rows.push(row)
+  }
+  return groups
 }

@@ -46,17 +46,17 @@ export async function findPlace(home: string, placeId: string): Promise<Place | 
  * Run the bundled Python helper on a remote place and return its JSON text.
  * On SSH the first try is python3. Windows hosts fall back to the py launcher.
  */
-export async function runRemote(place: Place, args: string[], script: string): Promise<string> {
+export async function runRemote(place: Place, args: string[], script: string, timeoutMs = RUN_TIMEOUT_MS): Promise<string> {
   if (place.kind === 'wsl') {
-    return runOnce('wsl.exe', ['-d', place.target, '--', 'python3', '-', ...args], script, place)
+    return runOnce('wsl.exe', ['-d', place.target, '--', 'python3', '-', ...args], script, place, timeoutMs)
   }
   if (place.kind === 'ssh') {
     const base = ['-o', 'BatchMode=yes', '-o', `ConnectTimeout=${CONNECT_TIMEOUT_SEC}`, place.target]
     try {
-      return await runOnce('ssh', [...base, 'python3', '-', ...args], script, place)
+      return await runOnce('ssh', [...base, 'python3', '-', ...args], script, place, timeoutMs)
     } catch (error) {
       if (!looksLikeMissingPython(error)) throw error
-      return runOnce('ssh', [...base, 'py', '-3', '-', ...args], script, place)
+      return runOnce('ssh', [...base, 'py', '-3', '-', ...args], script, place, timeoutMs)
     }
   }
   throw new Error('이 컴퓨터는 원격으로 다루지 않아요.')
@@ -155,9 +155,9 @@ function looksLikeMissingPython(error: unknown): boolean {
   return /python3|not recognized|not found|Microsoft Store|찾을 수 없/i.test(text)
 }
 
-async function runOnce(command: string, args: string[], input: string, place: Place): Promise<string> {
+async function runOnce(command: string, args: string[], input: string, place: Place, timeoutMs = RUN_TIMEOUT_MS): Promise<string> {
   try {
-    const result = await runQuiet(command, args, input, { timeoutMs: RUN_TIMEOUT_MS })
+    const result = await runQuiet(command, args, input, { timeoutMs })
     const jsonStart = result.stdout.indexOf('{')
     if (result.code === 0 && jsonStart >= 0) return result.stdout.slice(jsonStart)
     const detail = result.stderr.trim() || result.stdout.trim()
