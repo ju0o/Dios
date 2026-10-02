@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "updated_at": "2026-10-02T11:00:00+09:00",
+  "status": "observing",
+  "error": null,
+  "ai": { "mode": "ollama", "model": "qwen2.5:7b" },
+  "new_suggestion_count": 2,
+  "future_field": { "ignored": true },
+  "suggestions": [
+    {
+      "id": "s-001",
+      "title": "Agent 결과 전달 반복",
+      "plain_summary": "같은 결과를 에이전트 창에 여러 번 붙여 넣고 있어요.",
+      "suggested_skill_name": "Agent 결과 전달",
+      "why_it_may_help": "한 번만 누르면 같은 순서로 전달할 수 있어요.",
+      "occurrence_count": 22,
+      "severity": "medium",
+      "estimated_saved_minutes_per_week": 34,
+      "extra": "kept out of the screen"
+    },
+    {
+      "id": "s-002",
+      "title": "작업 완료 알림",
+      "plain_summary": "끝난 작업을 매번 직접 확인하고 있어요.",
+      "suggested_skill_name": "작업 완료 알림",
+      "why_it_may_help": "끝나면 한 줄로 알려 줄 수 있어요.",
+      "occurrence_count": 8,
+      "severity": "low",
+      "estimated_saved_minutes_per_week": 10
+    }
+  ],
+  "skills": [
+    {
+      "id": "k-001",
+      "name": "Agent 결과 전달",
+      "status": "ready",
+      "last_run": { "at": "2026-10-02T09:00:00+09:00", "result": "ok", "note": "전달 완료" },
+      "estimated_saved_minutes_total": 12
+    },
+    {
+      "id": "k-002",
+      "name": "작업 완료 알림",
+      "status": "active",
+      "last_run": null,
+      "estimated_saved_minutes_total": 0
+    },
+    {
+      "id": "k-003",
+      "name": "주간 정리",
+      "status": "paused",
+      "estimated_saved_minutes_total": 4
+    }
+  ],
+  "recent_runs": [
+    { "id": "r-001", "title": "Agent 결과 전달", "result": "ok", "at": "2026-10-02T09:00:00+09:00", "note": "전달 완료" }
+  ],
+  "saved_minutes_this_week": 34
+}

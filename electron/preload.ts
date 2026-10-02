@@ -125,6 +125,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('founderWork:changed', listener)
     return () => ipcRenderer.removeListener('founderWork:changed', listener)
   },
+
+  // JuRiger file bridge: read state, send one of the four allowed commands.
+  jurigerState: () => ipcRenderer.invoke('juriger:state'),
+  jurigerCommand: (action: string, targetId: string) => ipcRenderer.invoke('juriger:command', action, targetId),
+  onJuriger: (callback: (view: unknown) => void) => {
+    const listener = (_event: unknown, view: unknown) => callback(view)
+    ipcRenderer.on('juriger:changed', listener)
+    return () => ipcRenderer.removeListener('juriger:changed', listener)
+  },
   libraryList: () => ipcRenderer.invoke('library:list'),
   libraryPreview: (address: string) => ipcRenderer.invoke('library:preview', address),
   libraryAdd: (candidate: unknown, agentIds: string[] | null) => ipcRenderer.invoke('library:add', candidate, agentIds),

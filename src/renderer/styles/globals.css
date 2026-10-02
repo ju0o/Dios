@@ -127,6 +127,22 @@ code, pre, kbd, .mono { font-family: var(--ju-mono); }
 .tidy-danger { min-height: 36px; background: var(--ju-bad); color: var(--ju-black); font-weight: 600; }
 .tidy-danger:hover:not(:disabled) { background: #ffa59d; }
 
+/* JuRiger: one status dot and a three-count strip. The rows reuse the scan list. */
+.juriger-with-dot { display: flex; align-items: center; gap: 8px; }
+.juriger-status { margin: 6px 0 0; color: var(--ju-muted); font-size: 15px; }
+.juriger-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ju-line); flex: none; }
+.juriger-dot.is-live { background: var(--ju-lime); box-shadow: 0 0 0 3px var(--ju-lime-soft); }
+.juriger-dot.is-wait { background: var(--ju-warn); }
+.juriger-dot.is-bad { background: var(--ju-bad); }
+.juriger-dot.is-idle, .juriger-dot.is-off { background: var(--ju-muted); }
+.juriger-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; }
+.juriger-counts p { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.juriger-counts small { color: var(--ju-muted); font-size: 13px; }
+.juriger-counts b { font-size: 22px; font-weight: 650; letter-spacing: -.03em; }
+.juriger-detail { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.juriger-detail p { margin: 0; color: rgba(242,241,234,.78); font-size: 14px; }
+@media (max-width: 640px) { .juriger-counts { grid-template-columns: 1fr; } }
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
