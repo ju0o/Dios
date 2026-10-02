@@ -1196,17 +1196,11 @@ async function currentJuriger() {
 ipcMain.handle('juriger:state', async () => currentJuriger())
 
 ipcMain.handle('juriger:command', async (_event, action: unknown, targetId: unknown) => {
-  const { writeCommand, JURIGER_ACTIONS } = await import('../src/core/juriger/read-bridge')
+  const { writeCommand, commandAllowed } = await import('../src/core/juriger/read-bridge')
   const name = String(action ?? '')
   const target = String(targetId ?? '')
-  if (!(JURIGER_ACTIONS as readonly string[]).includes(name)) return { ok: false, message: '그 명령은 보내지 않아요.', file: '' }
-  if (name !== 'open_juriger') {
-    const view = await currentJuriger()
-    const known = view.kind === 'ready' && (name === 'run_skill'
-      ? view.state.skills.some((skill) => skill.id === target)
-      : view.state.suggestions.some((item) => item.id === target))
-    if (!known) return { ok: false, message: '그 항목은 지금 목록에 없어요. 다시 살펴본 뒤 눌러 주세요.', file: '' }
-  }
+  const allowed = commandAllowed(await currentJuriger(), name, target)
+  if (!allowed.ok) return { ok: false, message: allowed.message, file: '' }
   const result = writeCommand(await jurigerBridgeRoot(), { id: crypto.randomUUID(), action: name, targetId: name === 'open_juriger' ? '' : target, confirmedByUser: true })
   if (result.ok) recordActivity('juriger', 'JuRiger에 명령 보냄', name)
   return result

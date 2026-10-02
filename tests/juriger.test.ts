@@ -9,8 +9,10 @@ import {
   JURIGER_OFFLINE_AFTER_MS,
   JURIGER_STALE_AFTER_MS,
   bridgeRoot,
+  commandAllowed,
   freshnessOf,
   readBridge,
+  skillCanRun,
   writeCommand,
   type BridgeRead,
 } from '../src/core/juriger/read-bridge'
@@ -142,6 +144,34 @@ describe('freshness', () => {
     expect(bridgeStatusLine(stale)).toBe('JuRiger 상태를 다시 확인하는 중')
     expect(bridgeStatusLine(offline)).toBe('JuRiger와 연결되지 않았어요.')
     expect(jurigerHeadline(stale)).toBe('JuRiger 상태를 다시 확인하는 중')
+  })
+})
+
+describe('run_skill only when the skill is ready', () => {
+  function viewWith(status: string, id = 'k-run'): BridgeRead {
+    const root = tempDir()
+    const value = JSON.parse(FIXTURE) as { skills: Array<{ id: string; status: string }>; updated_at: string }
+    value.updated_at = new Date(NOW).toISOString()
+    value.skills.push({ id, name: '시험', status, last_run: null, estimated_saved_minutes_total: 0 } as never)
+    fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify(value))
+    return readBridge(root, NOW)
+  }
+
+  it('allows a ready skill and refuses every other status, including a missing id', () => {
+    expect(skillCanRun('ready')).toBe(true)
+    expect(skillCanRun('active')).toBe(false)
+    expect(commandAllowed(viewWith('ready'), 'run_skill', 'k-run')).toEqual({ ok: true })
+    for (const status of ['active', 'paused', 'failed', 'weird']) {
+      const decision = commandAllowed(viewWith(status), 'run_skill', 'k-run')
+      expect(decision.ok).toBe(false)
+      if (!decision.ok) expect(decision.message).toBe('준비된 Skill만 실행할 수 있어요.')
+    }
+    const known = viewWith('ready')
+    expect(commandAllowed(known, 'run_skill', '없는-id').ok).toBe(false)
+    if (!commandAllowed(known, 'run_skill', '없는-id').ok) {
+      expect(commandAllowed(known, 'run_skill', '없는-id')).toMatchObject({ message: '그 항목은 지금 목록에 없어요. 다시 살펴본 뒤 눌러 주세요.' })
+    }
+    expect(commandAllowed(readBridge(tempDir()), 'run_skill', 'k-run').ok).toBe(false)
   })
 })
 

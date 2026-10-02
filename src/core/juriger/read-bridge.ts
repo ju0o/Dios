@@ -225,6 +225,30 @@ export interface CommandInput {
   confirmedByUser: boolean
 }
 
+/** A skill can be asked to run only after JuRiger has marked it ready. */
+export function skillCanRun(status: string): boolean {
+  return status === 'ready'
+}
+
+/**
+ * Whether DIOS may write this command for the state it just read.
+ * The main process calls this again so a modified screen cannot ask for a skill that is not ready.
+ */
+export function commandAllowed(view: BridgeRead, action: string, targetId: string): { ok: true } | { ok: false; message: string } {
+  if (!(JURIGER_ACTIONS as readonly string[]).includes(action)) return { ok: false, message: '그 명령은 보내지 않아요.' }
+  if (action === 'open_juriger') return { ok: true }
+  const missing = { ok: false as const, message: '그 항목은 지금 목록에 없어요. 다시 살펴본 뒤 눌러 주세요.' }
+  if (view.kind !== 'ready') return missing
+  if (action === 'run_skill') {
+    const skill = view.state.skills.find((item) => item.id === targetId)
+    if (!skill) return missing
+    if (!skillCanRun(skill.status)) return { ok: false, message: '준비된 Skill만 실행할 수 있어요.' }
+    return { ok: true }
+  }
+  if (!view.state.suggestions.some((item) => item.id === targetId)) return missing
+  return { ok: true }
+}
+
 function safeId(id: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/.test(id)
 }

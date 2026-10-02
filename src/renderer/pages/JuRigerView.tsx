@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { bridgeStatusLine, jurigerHeadline, repeatsLine, runResultLine, severityLine, skillStatusLine, weekMinutesLine } from '../../core/juriger/juriger-copy'
-import type { BridgeRead, JurigerAction, JurigerRecentRun, JurigerSkill, JurigerSuggestion } from '../../core/juriger/read-bridge'
+import { skillCanRun, type BridgeRead, type JurigerAction, type JurigerRecentRun, type JurigerSkill, type JurigerSuggestion } from '../../core/juriger/read-bridge'
 import { jurigerApi } from './juriger-api'
 import { whenText } from './skill-board-api'
 
@@ -211,7 +211,7 @@ function SkillRow({ skill, fresh, busy, onRun }: { skill: JurigerSkill; fresh: b
         {last && <small className="is-why">{last}{skill.lastRun?.note ? ` · ${skill.lastRun.note}` : ''}</small>}
       </div>
       <div className="scan-row-actions">
-        <button type="button" className="skill-action primary" disabled={!fresh || busy || skill.status === 'failed'} onClick={onRun}>실행</button>
+        <button type="button" className="skill-action primary" disabled={!fresh || busy || !skillCanRun(skill.status)} onClick={onRun}>실행</button>
       </div>
     </li>
   )
