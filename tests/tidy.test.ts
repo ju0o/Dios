@@ -91,7 +91,7 @@ describe('git leftovers', () => {
       return { code: 0, stdout: '', stderr: '' }
     }
     const copyRow = await repoLeftovers(copy, '/main/.worktrees/feat')
-    expect(copyRow).toMatchObject({ partOf: '/main', worktrees: [], lastCommitAt: 0 })
+    expect(copyRow).toMatchObject({ partOf: path.resolve('/main'), worktrees: [], lastCommitAt: 0 })
     const mainRow = await repoLeftovers(copy, '/main')
     expect(mainRow.partOf).toBe('')
     expect(mainRow.worktrees).toHaveLength(1)
