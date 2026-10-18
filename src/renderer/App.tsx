@@ -22,6 +22,7 @@ import { FounderWorkView } from './pages/FounderWorkView'
 import { SkillBoardView } from './pages/SkillBoardView'
 import { ApiKeysView } from './pages/ApiKeysView'
 import { TidyView } from './pages/TidyView'
+import { JuRigerView } from './pages/JuRigerView'
 import { AIResourceView } from './pages/AIResourceView'
 import { DecisionView } from './pages/DecisionView'
 import { ExperimentView } from './pages/ExperimentView'
@@ -37,7 +38,7 @@ import { PixelField } from './brand/PixelField'
 import { SignalMark } from './brand/SignalMark'
 import { WORK_HOLD_KEY, firstView, isWorkListOn } from '../core/founder-work/work-hold'
 
-type ViewType = 'now' | 'skillBoard' | 'apiKeys' | 'agentMonitor' | 'tidy' | 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'timeline' | 'aiResources' | 'decisions' | 'experiments' | 'humanGates'
+type ViewType = 'now' | 'skillBoard' | 'apiKeys' | 'agentMonitor' | 'tidy' | 'juriger' | 'home' | 'project-data' | 'changes' | 'maintenance' | 'backups' | 'environment' | 'requests' | 'operations' | 'files' | 'tree' | 'skills' | 'memory' | 'agents' | 'system' | 'settings' | 'dashboard' | 'timeline' | 'aiResources' | 'decisions' | 'experiments' | 'humanGates'
 
 interface NavItem { id: ViewType; label: string; icon: string; hold?: boolean }
 
@@ -49,6 +50,7 @@ const primaryNavBase: NavItem[] = [
   { id: 'apiKeys', label: 'API 키 관리', icon: '⚿' },
   { id: 'agentMonitor', label: '사용량', icon: '◔' },
   { id: 'tidy', label: '정리', icon: '▤' },
+  { id: 'juriger', label: 'JuRiger', icon: '◉' },
 ]
 
 function storage(): Storage | null {
@@ -183,6 +185,7 @@ export default function App() {
       case 'skillBoard': return <SkillBoardView />
       case 'apiKeys': return <ApiKeysView />
       case 'tidy': return <TidyView />
+      case 'juriger': return <JuRigerView />
       case 'home': return <ProjectHomeView onNavigate={navigate} />
       case 'project-data': return <ProjectConnectionsView onNavigate={navigate} />
       case 'changes': return <ChangesView onNavigate={navigate} />

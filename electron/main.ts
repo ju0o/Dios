@@ -114,6 +114,7 @@ app.whenReady().then(() => {
   createWindow()
   startDriftWatch()
   startWorkWatch()
+  startJurigerWatch()
   startUpdateWatch()
   startBlurbWatch()
 
@@ -1207,6 +1208,64 @@ function startWorkWatch(): void {
   }
   setTimeout(() => { void attach(); void publish() }, 3_000)
   setInterval(() => { void attach(); void publish() }, 60_000)
+}
+
+async function jurigerBridgeRoot(): Promise<string> {
+  const { bridgeRoot } = await import('../src/core/juriger/read-bridge')
+  return bridgeRoot(process.platform)
+}
+
+function pushJuriger(view: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('juriger:changed', view)
+  }
+}
+
+async function currentJuriger() {
+  const { readBridge } = await import('../src/core/juriger/read-bridge')
+  return readBridge(await jurigerBridgeRoot())
+}
+
+ipcMain.handle('juriger:state', async () => currentJuriger())
+
+ipcMain.handle('juriger:command', async (_event, action: unknown, targetId: unknown) => {
+  const { writeCommand, commandAllowed } = await import('../src/core/juriger/read-bridge')
+  const name = String(action ?? '')
+  const target = String(targetId ?? '')
+  const allowed = commandAllowed(await currentJuriger(), name, target)
+  if (!allowed.ok) return { ok: false, message: allowed.message, file: '' }
+  const result = writeCommand(await jurigerBridgeRoot(), { id: crypto.randomUUID(), action: name, targetId: name === 'open_juriger' ? '' : target, confirmedByUser: true })
+  if (result.ok) recordActivity('juriger', 'JuRiger에 명령 보냄', name)
+  return result
+})
+
+/** Watch JuRiger's bridge folder the same way the to-do folder is watched. */
+function startJurigerWatch(): void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let watching = ''
+  const publish = async () => {
+    try {
+      pushJuriger(await currentJuriger())
+    } catch {
+      // The bridge may not exist yet. The next poll tries again.
+    }
+  }
+  const schedule = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => { void publish() }, 900)
+  }
+  const attach = async () => {
+    const root = await jurigerBridgeRoot()
+    if (!root || root === watching || !fs.existsSync(root)) return
+    watching = root
+    try {
+      fs.watch(root, { recursive: true }, schedule)
+    } catch {
+      // No native watcher here; the minute poll below still refreshes the screen.
+    }
+  }
+  setTimeout(() => { attach(); void publish() }, 3_000)
+  setInterval(() => { attach(); void publish() }, 60_000)
 }
 
 ipcMain.handle('skillBoard:projects', async (_event, placeId: string) => {
