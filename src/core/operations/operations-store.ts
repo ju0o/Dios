@@ -92,7 +92,7 @@ export function updateConnection(id: string, input: Partial<ConnectionInput>) {
     input.provider?.trim() || current.provider,
     input.purpose?.trim() ?? current.purpose,
     input.endpoint?.trim() || current.endpoint,
-    input.apiKey?.trim() ?? current.apiKey,
+    input.apiKey?.trim() || current.apiKey,
     now(), id
   )
   return listConnections().find((connection: any) => connection.id === id)

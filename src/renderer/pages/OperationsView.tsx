@@ -86,7 +86,7 @@ export function OperationsView({ onNavigate }: OperationsViewProps) {
   }
 
   function startEditConnection(connection: ConnectionRecord) {
-    setConnectionDraft({ name: connection.name, provider: connection.provider, purpose: connection.purpose || '', endpoint: connection.endpoint, apiKey: connection.apiKey || '' })
+    setConnectionDraft({ name: connection.name, provider: connection.provider, purpose: connection.purpose || '', endpoint: connection.endpoint, apiKey: '' })
     setEditingConnectionId(connection.id)
     setShowConnectionForm(true)
   }
@@ -257,7 +257,7 @@ export function OperationsView({ onNavigate }: OperationsViewProps) {
             <input value={connectionDraft.provider} onChange={(e) => setConnectionDraft({ ...connectionDraft, provider: e.target.value })} placeholder="제공자 (예: OpenAI)" className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm" />
             <input value={connectionDraft.purpose} onChange={(e) => setConnectionDraft({ ...connectionDraft, purpose: e.target.value })} placeholder="사용 목적" className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm" />
             <input value={connectionDraft.endpoint} onChange={(e) => setConnectionDraft({ ...connectionDraft, endpoint: e.target.value })} placeholder="API 또는 사용량 주소" className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm" />
-            <input value={connectionDraft.apiKey} onChange={(e) => setConnectionDraft({ ...connectionDraft, apiKey: e.target.value })} placeholder="API 키 (선택)" className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm" />
+            <input value={connectionDraft.apiKey} onChange={(e) => setConnectionDraft({ ...connectionDraft, apiKey: e.target.value })} placeholder={editingConnectionId ? "새 API 키 (비워 두면 기존 키 유지)" : "API 키 (선택)"} className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm" />
             <button onClick={saveConnection} className="rounded-lg bg-green-600 hover:bg-green-500 text-sm xl:col-span-5">{editingConnectionId ? '연동 정보 수정' : '연동 정보 저장'}</button>
           </div>
         )}
