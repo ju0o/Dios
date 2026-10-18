@@ -639,21 +639,54 @@ ipcMain.handle('aiResource:usageHistory', async (_event, resourceId: string) => 
 })
 
 // ═══════════════════════════════════════════
+// Secret masking at the IPC boundary
+// ═══════════════════════════════════════════
+/** Replace `apiKey` with a masked hint before anything leaves the main process. */
+function hideApiKey<T>(item: T): T {
+  if (!item || typeof item !== 'object' || !('apiKey' in (item as object))) return item
+  const key = String((item as { apiKey?: unknown }).apiKey ?? '')
+  return { ...(item as object), apiKey: key ? maskApiKeyForScreen(key) : '' } as T
+}
+function hideApiKeys<T>(result: T): T {
+  if (Array.isArray(result)) return result.map(hideApiKey) as T
+  if (result && typeof result === 'object' && 'data' in (result as object)) {
+    const data = (result as { data?: unknown }).data
+    return { ...(result as object), data: Array.isArray(data) ? data.map(hideApiKey) : hideApiKey(data) } as T
+  }
+  return hideApiKey(result)
+}
+function maskApiKeyForScreen(key: string): string {
+  const clean = key.trim()
+  return clean.length <= 8 ? '••••••••' : `••••••••${clean.slice(-4)}`
+}
+/** A masked hint sent back from the screen must never overwrite the real key. */
+function dropMaskedKey<T>(input: T): T {
+  if (input && typeof input === 'object' && 'apiKey' in (input as object)) {
+    const key = (input as { apiKey?: unknown }).apiKey
+    if (typeof key !== 'string' || !key.trim() || key.includes('•')) {
+      const { apiKey: _drop, ...rest } = input as Record<string, unknown>
+      return rest as T
+    }
+  }
+  return input
+}
+
+// ═══════════════════════════════════════════
 // Agent Monitor (구독 AI 서비스 사용량 추적)
 // ═══════════════════════════════════════════
 ipcMain.handle('agentMonitor:listServices', async () => {
   const { listAgentServices } = await import('../src/core/agent-monitor/agent-monitor-store')
-  return listAgentServices()
+  return hideApiKeys(listAgentServices())
 })
 
 ipcMain.handle('agentMonitor:createService', async (_event, input: any) => {
   const { createAgentService } = await import('../src/core/agent-monitor/agent-monitor-store')
-  return createAgentService(input)
+  return hideApiKeys(createAgentService(input))
 })
 
 ipcMain.handle('agentMonitor:updateService', async (_event, id: string, input: any) => {
   const { updateAgentService } = await import('../src/core/agent-monitor/agent-monitor-store')
-  return updateAgentService(id, input)
+  return hideApiKeys(updateAgentService(id, dropMaskedKey(input)))
 })
 
 ipcMain.handle('agentMonitor:deleteService', async (_event, id: string) => {
@@ -1807,17 +1840,17 @@ ipcMain.handle('operations:settings:save', async (_event, settings: any) => {
 
 ipcMain.handle('operations:connections:list', async () => {
   const { listConnections } = await import('../src/core/operations/operations-store')
-  return listConnections()
+  return hideApiKeys(listConnections())
 })
 
 ipcMain.handle('operations:connections:create', async (_event, input: any) => {
   const { createConnection } = await import('../src/core/operations/operations-store')
-  return createConnection(input)
+  return hideApiKeys(createConnection(input))
 })
 
 ipcMain.handle('operations:connections:update', async (_event, id: string, input: any) => {
   const { updateConnection } = await import('../src/core/operations/operations-store')
-  return updateConnection(id, input)
+  return hideApiKeys(updateConnection(id, dropMaskedKey(input)))
 })
 
 ipcMain.handle('operations:connections:delete', async (_event, id: string) => {
