@@ -116,6 +116,7 @@ app.whenReady().then(() => {
   startWorkWatch()
   startUpdateWatch()
   startBlurbWatch()
+  startTidyBadgeWatch()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1276,22 +1277,42 @@ const secretLock = {
 /** Deleted keys wait here so 되돌리기 can put them back. Gone when the app closes. */
 const deletedKeys = new Map<string, import('../src/core/api-keys/api-key-store').DeletedKey>()
 
+/** Found keys waiting for a yes. The secret stays here, not in the window. Gone when the app closes. */
+let candidateMemory: import('../src/core/api-keys/project-discovery').CandidateMemory | null = null
+
+async function candidateBox() {
+  if (!candidateMemory) {
+    const { CandidateMemory } = await import('../src/core/api-keys/project-discovery')
+    candidateMemory = new CandidateMemory()
+  }
+  return candidateMemory
+}
+
 /** The last .env write, so 되돌리기 can put that one file back. */
 let envUndo: { keyId: string; file: string; backup: string; oldKey: string; project: string; platform: string; label: string; note: string } | null = null
 
 const SCAN_ROOTS_KEY = 'apiScanRoots'
+/** Place ids the Founder last chose for project discovery. Missing means "not chosen yet". */
+const DISCOVERY_PLACES_KEY = 'apiDiscoveryPlaces'
 /** Default or project folders the Founder took out with 빼기. */
 const SCAN_EXCLUDED_KEY = 'apiScanExcluded'
 
 type ScanOrigin = 'picked' | 'project' | 'default'
 
 function readPathList(key: string): string[] {
+  const stored = readStoredIds(key)
+  return stored ?? []
+}
+
+/** Null when this setting has never been saved, so a first visit can keep its own default. */
+function readStoredIds(key: string): string[] | null {
   try {
     const row = getDatabase().prepare('SELECT value_json FROM app_settings WHERE key = ?').get(key) as { value_json?: string } | undefined
-    const parsed = row?.value_json ? JSON.parse(row.value_json) : []
+    if (!row) return null
+    const parsed = row.value_json ? JSON.parse(row.value_json) : []
     return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []
   } catch {
-    return []
+    return null
   }
 }
 
@@ -1334,27 +1355,107 @@ async function allScanRoots(): Promise<string[]> {
   return (await scanRootEntries()).map((entry) => entry.root)
 }
 
-/** Scan the given roots (or every known root), register what was found, and describe each root. */
+/** Scan the given roots (or every known root) and hold new keys as candidates. Nothing is saved yet. */
 async function runKeyScan(onlyRoots?: string[]) {
-  const { scanEnvRoots, scanMessage, rootLine } = await import('../src/core/api-keys/env-scan')
-  const { registerFindings } = await import('../src/core/api-keys/api-key-store')
+  const { scanMessage, rootLine } = await import('../src/core/api-keys/env-scan')
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listApiKeys } = await import('../src/core/api-keys/api-key-store')
+  const { listPlaces } = await import('../src/core/skill-board/places')
   const known = await allScanRoots()
   const wanted = onlyRoots && onlyRoots.length ? onlyRoots.map((root) => path.resolve(String(root))) : known
-  const scanned = scanEnvRoots(wanted)
-  const registered = registerFindings(getDatabase(), secretLock, scanned.findings)
-  for (const id of registered.added) await syncUsageService(id)
-  if (registered.added.length) recordActivity('apiKey', '프로젝트 폴더에서 API 키 찾아 등록', `${registered.added.length}개`)
-  const roots = scanned.roots.map((report) => ({
-    ...report,
-    added: registered.addedByRoot[report.root] ?? 0,
-    line: rootLine(report, registered.addedByRoot[report.root] ?? 0),
-  }))
+  const places = await listPlaces(os.homedir(), process.platform)
+  const local = places.find((place) => place.kind === 'local')
+  const place = local ? discovery.asDiscoveryPlace(local) : discovery.LOCAL_PLACE
+  const existing = listApiKeys(getDatabase()).map((card) => ({ project: card.project, platform: card.platform, label: card.label }))
+  const collected = discovery.collectFromRoots(wanted, existing, discovery.probeGit, place)
+  const memory = await candidateBox()
+  memory.replacePlace(place.placeId, discovery.withIds(collected.pending, () => crypto.randomUUID()))
+  const roots = collected.scan.roots.map((report) => ({ ...report, added: 0, line: rootLine(report, 0) }))
+  const lead = discovery.candidateLead(collected.projects.length, collected.pending.length, discovery.projectsWithKeys(collected.pending))
   return {
     ok: true,
-    message: scanMessage(scanned.folders, scanned.files, registered.added.length, registered.kept, scanned.findings.length, wanted),
-    added: registered.added.length,
+    message: scanMessage(collected.scan.folders, collected.scan.files, 0, collected.kept, collected.scan.findings.length, wanted),
+    added: 0,
     roots,
     scannedAt: Date.now(),
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead,
+    projectsFound: collected.projects.length,
+    listing: await keyListing(),
+  }
+}
+
+/** Look only at the places the Founder checked. A remote place that is off is not contacted. */
+async function runProjectDiscovery(selectedIds: string[]) {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listPlaces, runRemote } = await import('../src/core/skill-board/places')
+  const places = await listPlaces(os.homedir(), process.platform)
+  const chosen = discovery.chosenPlaces(places, selectedIds)
+  writePathList(DISCOVERY_PLACES_KEY, chosen.map((place) => place.id))
+  const localPlace = chosen.find((place) => place.kind === 'local')
+  const local = localPlace
+    ? await runKeyScan()
+    : {
+      ok: true,
+      message: chosen.length ? '' : '찾을 위치를 하나 골라 주세요.',
+      added: 0,
+      roots: [],
+      scannedAt: 0,
+      candidates: (await candidateBox()).list(),
+      notes: [] as string[],
+      lead: '',
+      projectsFound: 0,
+      listing: await keyListing(),
+    }
+  const notes = [...local.notes]
+  let projectsFound = local.projectsFound
+  const memory = await candidateBox()
+  for (const place of chosen) {
+    if (place.kind === 'local') continue
+    const here = discovery.asDiscoveryPlace(place)
+    try {
+      const raw = await runRemote(place, [], discovery.DISCOVERY_SCRIPT, 12000)
+      const projects = discovery.parseRemoteProjects(raw)
+      const { listApiKeys } = await import('../src/core/api-keys/api-key-store')
+      const existing = listApiKeys(getDatabase()).map((card) => ({ project: card.project, platform: card.platform, label: card.label }))
+      const found = discovery.findingsFromRemote(projects, here, existing)
+      memory.replacePlace(place.id, discovery.withIds(found.pending, () => crypto.randomUUID()))
+      projectsFound += found.projectsFound
+    } catch {
+      notes.push(discovery.placeFailureNote(place.name))
+    }
+  }
+  const cards = memory.list()
+  const withKeys = new Set(cards.map((card) => `${card.placeId}\n${card.project}`)).size
+  const lead = discovery.candidateLead(projectsFound, cards.length, withKeys)
+  return {
+    ...local,
+    candidates: cards,
+    notes,
+    projectsFound,
+    lead,
+    message: lead || local.message,
+  }
+}
+
+/** Save the chosen candidates with the existing key store, then forget those secrets. */
+async function saveChosenCandidates(ids: string[]) {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const memory = await candidateBox()
+  const approved = discovery.approveCandidates(getDatabase(), secretLock, memory, ids)
+  for (const id of approved.savedIds) await syncUsageService(id)
+  const saved = approved.saved
+  if (saved) recordActivity('apiKey', '고른 API 키 저장', `${saved}개`)
+  return {
+    ok: true,
+    message: saved ? `${saved}개를 저장했어요.` : '저장할 키가 없어요.',
+    added: saved,
+    roots: [],
+    scannedAt: 0,
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead: '',
     listing: await keyListing(),
   }
 }
@@ -1519,6 +1620,45 @@ ipcMain.handle('apiKeys:scan', async (_event, onlyRoots?: unknown) => {
   return runKeyScan(roots)
 })
 
+/** Places the Founder can check. This does not connect to any of them. */
+ipcMain.handle('apiKeys:discoveryPlaces', async () => {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const { listPlaces } = await import('../src/core/skill-board/places')
+  const places = (await listPlaces(os.homedir(), process.platform)).map((place) => ({ id: place.id, name: place.name, kind: place.kind }))
+  return { places, selectedIds: discovery.discoverySelection(places, readStoredIds(DISCOVERY_PLACES_KEY)) }
+})
+
+/** Find projects only in the places the Founder checked. Keys stay as candidates. */
+ipcMain.handle('apiKeys:discover', async (_event, ids: unknown) => {
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : []
+  return runProjectDiscovery(wanted)
+})
+
+/** Save only the candidates the Founder picked. */
+ipcMain.handle('apiKeys:saveCandidates', async (_event, ids: unknown) => {
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : []
+  return saveChosenCandidates(wanted)
+})
+
+/** Drop candidates without writing them. */
+ipcMain.handle('apiKeys:dismissCandidates', async (_event, ids: unknown) => {
+  const discovery = await import('../src/core/api-keys/project-discovery')
+  const memory = await candidateBox()
+  const wanted = Array.isArray(ids) ? ids.map(String).filter(Boolean) : memory.list().map((card) => card.id)
+  discovery.dismissCandidates(memory, wanted)
+  return {
+    ok: true,
+    message: '이번엔 저장하지 않았어요.',
+    added: 0,
+    roots: [],
+    scannedAt: 0,
+    candidates: memory.list(),
+    notes: [] as string[],
+    lead: '',
+    listing: await keyListing(),
+  }
+})
+
 /** Let the Founder pick one or more folders, remember them, and scan just those right away. */
 ipcMain.handle('apiKeys:scanPick', async () => {
   const picked = await dialog.showOpenDialog({ title: '키를 찾을 프로젝트 폴더 고르기 (여러 개 가능)', properties: ['openDirectory', 'multiSelections'] })
@@ -1626,7 +1766,14 @@ const WINDOWS_PROCESS_SCRIPT = [
   '} | ConvertTo-Json -Compress',
 ].join('\n')
 
-async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; notes: string[] }> {
+const WINDOWS_PORT_SCRIPT = [
+  'Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |',
+  'Select-Object LocalPort, OwningProcess | ConvertTo-Json -Compress',
+].join(' ')
+
+type RawProcess = import('../src/core/tidy/background-jobs').RawProcess
+
+async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; raw: RawProcess[]; notes: string[] }> {
   const { headlessProcesses, parseProcessJson, parsePsList } = await import('../src/core/tidy/background-jobs')
   const notes: string[] = []
   const ownPids = [process.pid, process.ppid].filter((pid) => pid > 0)
@@ -1636,20 +1783,45 @@ async function tidyProcesses(): Promise<{ processes: TidyReport['processes']; no
       const result = await tidyRun('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeoutMs: 40000 })
       if (result.code !== 0) {
         notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-        return { processes: [], notes }
+        return { processes: [], raw: [], notes }
       }
-      return { processes: headlessProcesses(parseProcessJson(result.stdout), { ownPids }), notes }
+      const raw = parseProcessJson(result.stdout)
+      return { processes: headlessProcesses(raw, { ownPids }), raw, notes }
     }
     const result = await tidyRun('ps', ['-eo', 'pid=,ppid=,etimes=,rss=,args='], { timeoutMs: 10000 })
     if (result.code !== 0) {
       notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-      return { processes: [], notes }
+      return { processes: [], raw: [], notes }
     }
+    const raw = parsePsList(result.stdout)
     const cwdOf = process.platform === 'linux' ? (pid: number) => fs.readlinkSync(`/proc/${pid}/cwd`) : undefined
-    return { processes: headlessProcesses(parsePsList(result.stdout), { ownPids, cwdOf }), notes }
+    return { processes: headlessProcesses(raw, { ownPids, cwdOf }), raw, notes }
   } catch {
     notes.push('켜져 있는 프로그램 목록을 읽지 못했어요.')
-    return { processes: [], notes }
+    return { processes: [], raw: [], notes }
+  }
+}
+
+/** Listening ports for the current OS. A missing command or a bad exit becomes ok: false. */
+async function collectListeningPorts(): Promise<{ ok: boolean; ports: Map<number, number[]> }> {
+  const { parseLsofListen, parseNetTcpJson, parseSsListen } = await import('../src/core/tidy/ports')
+  try {
+    if (process.platform === 'win32') {
+      const encoded = Buffer.from(WINDOWS_PORT_SCRIPT, 'utf16le').toString('base64')
+      const result = await tidyRun('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { timeoutMs: 20000 })
+      if (result.code !== 0) return { ok: false, ports: new Map() }
+      return { ok: true, ports: parseNetTcpJson(result.stdout) }
+    }
+    if (process.platform === 'darwin') {
+      const result = await tidyRun('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'], { timeoutMs: 15000 })
+      if (result.code !== 0 && !result.stdout.trim()) return { ok: false, ports: new Map() }
+      return { ok: true, ports: parseLsofListen(result.stdout) }
+    }
+    const result = await tidyRun('ss', ['-ltnp'], { timeoutMs: 10000 })
+    if (result.code !== 0) return { ok: false, ports: new Map() }
+    return { ok: true, ports: parseSsListen(result.stdout) }
+  } catch {
+    return { ok: false, ports: new Map() }
   }
 }
 
@@ -1665,7 +1837,12 @@ async function buildTidyReport(): Promise<TidyReport> {
   })
   repos.sort((left, right) => left.repo.localeCompare(right.repo))
   if (repos.length && repos.every((repo) => repo.failed)) notes.push('git 프로그램이 없거나 응답하지 않아서 프로젝트 상태를 못 읽었어요.')
-  const [jobs, processes] = await Promise.all([tidyJobs(), tidyProcesses()])
+  const [jobs, looked] = await Promise.all([tidyJobs(), tidyProcesses()])
+  const { applyPortCollection } = await import('../src/core/tidy/ports')
+  const attached = looked.processes.length
+    ? applyPortCollection(looked.processes, looked.raw, await collectListeningPorts())
+    : { processes: looked.processes, overlaps: [] as TidyReport['overlaps'], note: '' }
+  if (attached.note) notes.push(attached.note)
   const heavy = findHeavyFolders(roots, { limit: 40, sizeBudget: 30000 })
   const temp = tempFolderRow(os.tmpdir())
   if (temp && temp.bytes >= 50 * 1024 * 1024) heavy.push(temp)
@@ -1674,18 +1851,61 @@ async function buildTidyReport(): Promise<TidyReport> {
     roots,
     repos,
     jobs: jobs.jobs,
-    processes: processes.processes,
+    processes: attached.processes,
+    overlaps: attached.overlaps,
     heavy,
-    notes: [...notes, ...jobs.notes, ...processes.notes],
+    notes: [...notes, ...jobs.notes, ...looked.notes],
   }
+}
+
+type TidyBadge = import('../src/core/tidy/tidy-copy').TidyBadge
+
+let lastTidyBadge: TidyBadge = { count: 0, old: 0 }
+
+/** Pushes the left-menu number. One send, not a timer loop. */
+async function publishTidyBadge(report: Pick<TidyReport, 'processes' | 'overlaps'>): Promise<void> {
+  const { tidyBadge } = await import('../src/core/tidy/tidy-copy')
+  lastTidyBadge = tidyBadge(report)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('tidy:badge', lastTidyBadge)
+  }
+}
+
+/**
+ * One look after start, and only at programs and ports — not the full folder scan.
+ * Skipped once a full tidy report already exists.
+ */
+function startTidyBadgeWatch(): void {
+  setTimeout(() => {
+    void (async () => {
+      if (lastTidy) {
+        await publishTidyBadge(lastTidy)
+        return
+      }
+      try {
+        const looked = await tidyProcesses()
+        const { applyPortCollection } = await import('../src/core/tidy/ports')
+        const attached = looked.processes.length
+          ? applyPortCollection(looked.processes, looked.raw, await collectListeningPorts())
+          : { processes: looked.processes, overlaps: [] as TidyReport['overlaps'] }
+        await publishTidyBadge(attached)
+      } catch {
+        // A failed port read leaves the badge at zero.
+      }
+    })()
+  }, 60_000)
 }
 
 /** The report, reusing the last one unless a fresh look is asked for. Parallel asks share one scan. */
 async function tidyReport(refresh: boolean): Promise<TidyReport> {
-  if (!refresh && lastTidy) return lastTidy
+  if (!refresh && lastTidy) {
+    void publishTidyBadge(lastTidy)
+    return lastTidy
+  }
   if (!tidyInFlight) {
     tidyInFlight = buildTidyReport().then((report) => {
       lastTidy = report
+      void publishTidyBadge(report)
       return report
     }).finally(() => {
       tidyInFlight = null
@@ -1712,6 +1932,8 @@ function tidyKnownPaths(): Set<string> {
 
 ipcMain.handle('tidy:report', async (_event, refresh?: boolean) => tidyReport(Boolean(refresh)))
 
+ipcMain.handle('tidy:badge', () => lastTidyBadge)
+
 ipcMain.handle('tidy:open', async (_event, target: string) => {
   const resolved = path.resolve(String(target || ''))
   if (!tidyKnownPaths().has(resolved)) return { ok: false, message: '그 폴더는 목록에 없어요.' }
@@ -1734,7 +1956,12 @@ ipcMain.handle('tidy:stop', async (_event, pid: number) => {
   } catch {
     return { ok: false, message: '끄지 못했어요. 이미 꺼졌거나 권한이 없어요.' }
   }
-  if (lastTidy) lastTidy = { ...lastTidy, processes: lastTidy.processes.filter((proc) => proc.pid !== id) }
+  if (lastTidy) {
+    const { findOverlaps } = await import('../src/core/tidy/ports')
+    const processes = lastTidy.processes.filter((proc) => proc.pid !== id)
+    lastTidy = { ...lastTidy, processes, overlaps: findOverlaps(processes) }
+    void publishTidyBadge(lastTidy)
+  }
   recordActivity('tidy', '창 없이 켜져 있던 프로그램 끄기', row.summary)
   return { ok: true, message: `${row.summary}을(를) 껐어요.` }
 })

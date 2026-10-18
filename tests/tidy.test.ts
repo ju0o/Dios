@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { findRepos, parseStatusBranch, parseWorktrees, repoLeftovers, repoLine, repoNeedsAttention } from '../src/core/tidy/git-leftovers'
 import { cronText, devSummary, headlessProcesses, intervalText, jobName, parseCrontab, parseCsv, parsePsList, parseProcessJson, parseSchtasksCsv, parseSystemdTimers, processLine } from '../src/core/tidy/background-jobs'
 import { ageText, bytesText, findHeavyFolders, folderSize, heavyIsStale, heavyLine } from '../src/core/tidy/space-hogs'
-import { emptyLine, tidyHeadline } from '../src/core/tidy/tidy-copy'
+import { emptyLine, tidyBadge, tidyBadgeLabel, tidyHeadline } from '../src/core/tidy/tidy-copy'
 import type { RepoLeftover, Runner, TidyReport } from '../src/core/tidy/types'
 
 const temps: string[] = []
@@ -260,7 +260,7 @@ describe('space hogs', () => {
 })
 
 describe('tidy copy', () => {
-  const empty: TidyReport = { scannedAt: 0, roots: [], repos: [], jobs: [], processes: [], heavy: [], notes: [] }
+  const empty: TidyReport = { scannedAt: 0, roots: [], repos: [], jobs: [], processes: [], overlaps: [], heavy: [], notes: [] }
   it('says what needs eyes in one sentence', () => {
     expect(tidyHeadline(empty)).toBe('아직 살펴보지 않았어요.')
     expect(tidyHeadline({ ...empty, scannedAt: 1 })).toBe('지금은 정리할 게 없어요. 깨끗해요.')
@@ -268,11 +268,36 @@ describe('tidy copy', () => {
       ...empty,
       scannedAt: 1,
       repos: [{ ...cleanRepo, changed: 2 }, cleanRepo, { ...cleanRepo, worktrees: [{ path: '/w', branch: 'x', prunable: false, exists: true }] }],
-      processes: [{ pid: 1, ppid: 0, name: 'node', summary: 'vite', args: '', cwd: '', startedAt: 0, rssBytes: 0 }],
+      processes: [{ pid: 1, ppid: 0, name: 'node', summary: 'vite', args: '', cwd: '', startedAt: 0, rssBytes: 0, ports: [] }],
       jobs: [{ kind: 'cron', name: 'a', schedule: '매일 9시', command: 'a', lastRunAt: 0, nextRunAt: 0, enabled: true }],
       heavy: [{ path: '/x', kind: 'node_modules', project: '/p', bytes: 6 * 1073741824, files: 1, approx: false, projectTouchedAt: 0 }],
     }
     expect(tidyHeadline(busy)).toBe('저장 안 한 수정이 있는 프로젝트 1곳, 창 없이 켜져 있는 프로그램 1개, 혼자 도는 예약 작업 1개, 비울 수 있는 자리 약 6GB예요.')
+    expect(tidyHeadline({ ...empty, scannedAt: 1, overlaps: [{ kind: 'same-port', port: 3000, cwd: '', pids: [1, 2] }] })).toContain('같은 자리를 두고 겹친 프로그램 1건')
     expect(emptyLine('repos', 0)).toContain('API 키 관리')
+  })
+
+  it('hides the menu number until a server has been on for a day or two programs overlap', () => {
+    const now = 1_700_000_000_000
+    const quiet = tidyBadge({ processes: [], overlaps: [] }, now)
+    expect(quiet.count).toBe(0)
+    expect(tidyBadgeLabel(quiet)).toBe('')
+    const fresh = tidyBadge({
+      processes: [{ pid: 1, ppid: 0, name: 'node', summary: 'vite', args: '', cwd: '', startedAt: now - 60_000, rssBytes: 0, ports: [5173] }],
+      overlaps: [],
+    }, now)
+    expect(fresh.count).toBe(0)
+    const overlapped = tidyBadge({
+      processes: [],
+      overlaps: [{ kind: 'same-port', port: 3000, cwd: '', pids: [2, 3] }],
+    }, now)
+    expect(overlapped).toEqual({ count: 1, old: 0 })
+    expect(tidyBadgeLabel(overlapped)).toBe('같은 자리를 두고 겹친 프로그램이 있어요')
+    const old = tidyBadge({
+      processes: [{ pid: 4, ppid: 0, name: 'node', summary: 'vite', args: '', cwd: '', startedAt: now - 2 * 86_400_000, rssBytes: 0, ports: [] }],
+      overlaps: [{ kind: 'same-folder', port: 0, cwd: '/p', pids: [4, 5] }],
+    }, now)
+    expect(old).toEqual({ count: 2, old: 1 })
+    expect(tidyBadgeLabel(old)).toBe('하루 넘게 켜진 프로그램과 겹쳐서 켜진 프로그램이 있어요')
   })
 })

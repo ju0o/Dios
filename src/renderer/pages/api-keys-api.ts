@@ -1,9 +1,9 @@
-import type { ApiKeyCard, ApiKeyInput } from '../../core/api-keys/api-key-text'
+import type { ApiKeyCard, ApiKeyInput, PublicCandidate } from '../../core/api-keys/api-key-text'
 import type { KeyResult } from '../../core/api-keys/api-key-store'
 import type { RootReport } from '../../core/api-keys/env-scan'
 import type { AgentUsageSnapshot } from '../../core/agent-monitor/types'
 
-export type { ApiKeyCard, ApiKeyInput, KeyResult, RootReport }
+export type { ApiKeyCard, ApiKeyInput, KeyResult, RootReport, PublicCandidate }
 
 /** Where a scan folder came from: the Founder picked it, it is a connected project, or it is a common home. */
 export type ScanOrigin = 'picked' | 'project' | 'default'
@@ -35,11 +35,30 @@ export interface ScanRootResult extends RootReport {
   line: string
 }
 
+/** One place the Founder can include in a project search. */
+export interface DiscoveryPlaceChoice {
+  id: string
+  name: string
+  kind: 'local' | 'ssh' | 'wsl'
+}
+
+export interface DiscoveryPlaces {
+  places: DiscoveryPlaceChoice[]
+  /** Checked place ids. A first visit is only this computer. */
+  selectedIds: string[]
+}
+
 export interface ScanResult extends ListingResult {
   added: number
   roots: ScanRootResult[]
   /** Epoch ms; 0 when nothing was scanned (e.g. the folder dialog was closed). */
   scannedAt: number
+  /** Keys waiting for a yes. Masked. Absent on older replies. */
+  candidates?: PublicCandidate[]
+  /** Remote computers that could not be reached. */
+  notes?: string[]
+  /** Short line for the candidate card. */
+  lead?: string
 }
 
 /** API key calls exposed by the Electron preload. */
@@ -56,6 +75,14 @@ export interface ApiKeysApi {
   apiKeysPeekAll: () => Promise<Record<string, string>>
   /** Scan every known folder, or only `onlyRoots`. */
   apiKeysScan: (onlyRoots?: string[]) => Promise<ScanResult>
+  /** Places that can be searched, plus which ones are checked. Does not connect anywhere. */
+  apiKeysDiscoveryPlaces: () => Promise<DiscoveryPlaces>
+  /** Look for new projects only in the checked places. */
+  apiKeysDiscover: (placeIds: string[]) => Promise<ScanResult>
+  /** Save the chosen candidate ids. The secret stays in the main process. */
+  apiKeysSaveCandidates: (ids: string[]) => Promise<ScanResult>
+  /** Forget the chosen candidates without saving. */
+  apiKeysDismissCandidates: (ids: string[]) => Promise<ScanResult>
   /** Open the folder dialog, remember the picked folders, and scan just those. */
   apiKeysScanPick: () => Promise<ScanResult>
   apiKeysAddScanRoot: () => Promise<ListingResult>

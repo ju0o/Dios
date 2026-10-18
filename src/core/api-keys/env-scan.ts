@@ -31,6 +31,11 @@ export interface RootReport {
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-electron', 'release', 'build', 'out', '.next', '.venv', 'venv', '__pycache__', 'target', '.cache', 'coverage', '.idea', '.vscode'])
 const SKIP_ENV = /\.(example|sample|template|dist|defaults?)$/i
 const ENV_FILE = /^\.env(\..+)?$/
+
+/** Example, sample, and template env files are not real keys. */
+export function isSkippedEnvName(name: string): boolean {
+  return !ENV_FILE.test(name) || SKIP_ENV.test(name)
+}
 /** Deep enough for ~/Projects/<group>/<project>/<apps>/<web>/.env. */
 export const MAX_DEPTH = 5
 export const MAX_FILES = 600
@@ -139,7 +144,7 @@ export function parseEnv(text: string): Array<{ name: string; value: string }> {
  * scan root it belongs to, and `roots` reports every root — including ones that no longer exist —
  * so the screen can show exactly where DIOS looked.
  */
-export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: number; folders: number; roots: RootReport[] } {
+export function scanEnvRoots(roots: string[], options?: { skipDir?: (dir: string) => boolean }): { findings: EnvFinding[]; files: number; folders: number; roots: RootReport[] } {
   const findings: EnvFinding[] = []
   const reports: RootReport[] = []
   let files = 0
@@ -158,7 +163,7 @@ export function scanEnvRoots(roots: string[]): { findings: EnvFinding[]; files: 
     folders += 1
     const envFiles: string[] = []
     const walked = { truncated: false }
-    walk(real, 0, envFiles, walked)
+    walk(real, 0, envFiles, walked, options?.skipDir)
     let rootFiles = 0
     let rootFound = 0
     for (const file of envFiles) {
@@ -198,14 +203,14 @@ export function shortRoot(root: string): string {
  * One line after a scan. When only one or two folders were looked at, they are named,
  * so "폴더 1개를 훑었는데 없어요" never leaves the Founder guessing which one.
  */
-export function scanMessage(folders: number, files: number, added: number, kept: number, found: number, roots: string[] = []): string {
+export function scanMessage(folders: number, files: number, _added: number, kept: number, found: number, roots: string[] = []): string {
   const named = roots.length > 0 && roots.length <= 2 ? `${roots.map((root) => `"${shortRoot(root)}"`).join('와 ')} 폴더` : `폴더 ${folders}개`
   if (!folders) return '훑을 프로젝트 폴더가 없어요. 아래에서 폴더를 골라 주세요.'
   if (!files) return `${named}를 훑었는데 설정 파일(.env)이 없어요.`
   if (!found) return `${named}, 설정 파일 ${files}개를 훑었는데 API 키로 보이는 값이 없어요.`
   const parts = [`${named}를 훑어서 키 ${found}개를 찾았어요.`]
-  if (added) parts.push(`${added}개를 새로 등록했어요.`)
-  if (kept) parts.push(`이미 있던 ${kept}개는 그대로예요.`)
+  if (kept) parts.push(`이미 저장해 둔 ${kept}개는 빼 두었어요.`)
+  if (found > kept) parts.push('저장은 아래에서 고른 뒤에 해요.')
   return parts.join(' ')
 }
 
@@ -232,8 +237,9 @@ export function defaultScanRoots(home: string): string[] {
   })
 }
 
-function walk(dir: string, depth: number, out: string[], state: { truncated: boolean }): void {
+function walk(dir: string, depth: number, out: string[], state: { truncated: boolean }, skipDir?: (dir: string) => boolean): void {
   if (depth > MAX_DEPTH) return
+  if (skipDir?.(dir)) return
   if (out.length >= MAX_FILES) {
     state.truncated = true
     return
@@ -253,7 +259,7 @@ function walk(dir: string, depth: number, out: string[], state: { truncated: boo
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || (entry.name.startsWith('.') && entry.name !== '.config')) continue
-      walk(full, depth + 1, out, state)
+      walk(full, depth + 1, out, state, skipDir)
       continue
     }
     if (entry.isFile() && ENV_FILE.test(entry.name) && !SKIP_ENV.test(entry.name)) out.push(full)
@@ -273,6 +279,11 @@ function projectNameFor(root: string, file: string): string {
     dir = parent
   }
   return path.basename(topChild)
+}
+
+/** True when a folder has a project marker (package.json, .git, Cargo.toml, …). */
+export function isProjectDirectory(dir: string): boolean {
+  return looksLikeProject(dir)
 }
 
 function looksLikeProject(dir: string): boolean {

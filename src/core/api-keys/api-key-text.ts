@@ -29,6 +29,23 @@ export interface ApiKeyInput {
   note: string
 }
 
+/**
+ * A key found in a project, waiting for a yes.
+ * The secret itself never rides along. `source` is only the file name.
+ */
+export interface PublicCandidate {
+  id: string
+  project: string
+  placeId: string
+  placeName: string
+  placeKind: 'local' | 'ssh' | 'wsl'
+  platform: string
+  label: string
+  masked: string
+  source: string
+  projectPath: string
+}
+
 /** One row on the screen. The secret itself never rides along. */
 export interface ApiKeyCard {
   id: string

@@ -199,6 +199,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apiKeysPeekAll: () => ipcRenderer.invoke('apiKeys:peekAll'),
   apiKeysUndoDelete: (id: string) => ipcRenderer.invoke('apiKeys:undoDelete', id),
   apiKeysScan: (onlyRoots?: string[]) => ipcRenderer.invoke('apiKeys:scan', onlyRoots),
+  apiKeysDiscoveryPlaces: () => ipcRenderer.invoke('apiKeys:discoveryPlaces'),
+  apiKeysDiscover: (placeIds: string[]) => ipcRenderer.invoke('apiKeys:discover', placeIds),
+  apiKeysSaveCandidates: (ids: string[]) => ipcRenderer.invoke('apiKeys:saveCandidates', ids),
+  apiKeysDismissCandidates: (ids: string[]) => ipcRenderer.invoke('apiKeys:dismissCandidates', ids),
   apiKeysScanPick: () => ipcRenderer.invoke('apiKeys:scanPick'),
   apiKeysAddScanRoot: () => ipcRenderer.invoke('apiKeys:addScanRoot'),
   apiKeysRemoveScanRoot: (root: string) => ipcRenderer.invoke('apiKeys:removeScanRoot', root),
@@ -211,6 +215,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 정리 (unsaved work, background jobs, heavy folders)
   // ═══════════════════════════════════════════
   tidyReport: (refresh?: boolean) => ipcRenderer.invoke('tidy:report', refresh),
+  tidyBadge: () => ipcRenderer.invoke('tidy:badge'),
+  onTidyBadge: (callback: (payload: { count: number; old: number }) => void) => {
+    const listener = (_event: unknown, payload: { count: number; old: number }) => callback(payload)
+    ipcRenderer.on('tidy:badge', listener)
+    return () => ipcRenderer.removeListener('tidy:badge', listener)
+  },
   tidyOpen: (target: string) => ipcRenderer.invoke('tidy:open', target),
   tidyStop: (pid: number) => ipcRenderer.invoke('tidy:stop', pid),
   tidyTrash: (target: string) => ipcRenderer.invoke('tidy:trash', target),

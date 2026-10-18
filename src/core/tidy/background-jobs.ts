@@ -336,7 +336,7 @@ export function headlessProcesses(raw: RawProcess[], options: HeadlessOptions = 
     const summary = devSummary(entry.args)
     if (!summary || belongsToUs(entry)) continue
     const cwd = entry.cwd ?? (options.cwdOf ? safeCwd(options.cwdOf, entry.pid) : '')
-    out.push({ pid: entry.pid, ppid: entry.ppid, name: entry.name, summary, args: entry.args, cwd, startedAt: entry.startedAt, rssBytes: entry.rssBytes })
+    out.push({ pid: entry.pid, ppid: entry.ppid, name: entry.name, summary, args: entry.args, cwd, startedAt: entry.startedAt, rssBytes: entry.rssBytes, ports: [] })
   }
   // Keep only the top of each process tree so one server does not show as five rows.
   const pids = new Set(out.map((entry) => entry.pid))
